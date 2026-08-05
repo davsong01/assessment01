@@ -8,11 +8,15 @@ use App\Exceptions\InvalidCredentialsException;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 
-class LoginAction
+final class LoginAction
 {
     /**
      * @return array{
-     *     user: User,
+     *     user: array{
+     *         id: int,
+     *         name: string,
+     *         email: string
+     *     },
      *     token: string,
      *     token_type: string
      * }
@@ -38,7 +42,11 @@ class LoginAction
             ->plainTextToken;
 
         return [
-            'user' => $user,
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+            ],
             'token' => $token,
             'token_type' => 'Bearer',
         ];

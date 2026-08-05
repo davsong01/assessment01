@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\Hash;
 
 class UserSeeder extends Seeder
 {
+    public const TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
+
     public function run(): void
     {
         User::query()->updateOrCreate(
@@ -20,6 +22,8 @@ class UserSeeder extends Seeder
                 'name' => 'Main User',
                 'password' => Hash::make('password'),
                 'email_verified_at' => now(),
+                'totp_secret' => self::TOTP_SECRET,
+                'totp_enabled_at' => now(),
             ]
         );
     }

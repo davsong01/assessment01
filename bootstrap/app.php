@@ -1,8 +1,12 @@
 <?php
 
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -16,4 +20,16 @@ return Application::configure(basePath: dirname(__DIR__))
     })
     ->withExceptions(function (Exceptions $exceptions) {
         //
+    })->booting(function (): void {
+        RateLimiter::for(
+            'login',
+            function (Request $request): Limit {
+                $email = Str::lower(
+                    (string) $request->input('email')
+                );
+
+                return Limit::perMinute(5)
+                    ->by($email.'|'.$request->ip());
+            }
+        );
     })->create();

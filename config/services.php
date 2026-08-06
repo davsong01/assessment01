@@ -35,4 +35,20 @@ return [
         ],
     ],
 
+    'exchange_rate' => [
+        'driver' => env(
+            'EXCHANGE_RATE_DRIVER',
+            'http'
+        ),
+
+        'endpoint' => env(
+            'FX_RATE_ENDPOINT'
+        ),
+
+        'timeout_seconds' => (int) env(
+            'FX_RATE_TIMEOUT_SECONDS',
+            3
+        ),
+    ],
+
 ];

@@ -35,4 +35,6 @@ enum ErrorCode: string
     case DuplicateTransaction = 'DUPLICATE_TRANSACTION';
 
     case LedgerGuardrail = 'LEDGER_GUARDRAIL_REJECTION';
+
+    case ExchangeRateUnavailable = 'EXCHANGE_RATE_UNAVAILABLE';
 }

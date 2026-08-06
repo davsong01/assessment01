@@ -2,6 +2,7 @@
 
 use App\Enums\ErrorCode;
 use App\Exceptions\DuplicateLedgerReferenceException;
+use App\Exceptions\ExchangeRateUnavailableException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InvalidActionPayloadException;
 use App\Exceptions\InvalidCredentialsException;
@@ -40,6 +41,22 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request, Throwable $exception): bool => $request->is('api/*')
                 || $request->expectsJson()
+        );
+        $exceptions->render(
+            function (
+                ExchangeRateUnavailableException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::failure(
+                    message: $exception->getMessage(),
+                    code: ErrorCode::ExchangeRateUnavailable,
+                    status: 503
+                );
+            }
         );
 
         $exceptions->render(

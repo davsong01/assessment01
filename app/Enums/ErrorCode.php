@@ -25,4 +25,12 @@ enum ErrorCode: string
     case InvalidAction = 'INVALID_ACTION_PAYLOAD';
 
     case TwoFactorAuthentication = 'TWO_FACTOR_AUTHENTICATION_ERROR';
+
+    case LedgerImbalance = 'LEDGER_IMBALANCE';
+
+    case InvalidLedgerEntry = 'INVALID_LEDGER_ENTRY';
+
+    case InsufficientBalance = 'INSUFFICIENT_BALANCE';
+
+    case DuplicateTransaction = 'DUPLICATE_TRANSACTION';
 }

@@ -14,6 +14,13 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
+/**
+ * @property string $id
+ * @property int|null $user_id
+ * @property Currency $currency
+ * @property WalletType $type
+ * @property WalletStatus $status
+ */
 class Wallet extends Model
 {
     /** @use HasFactory<WalletFactory> */

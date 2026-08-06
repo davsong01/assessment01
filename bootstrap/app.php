@@ -1,11 +1,15 @@
 <?php
 
 use App\Enums\ErrorCode;
+use App\Exceptions\DuplicateLedgerReferenceException;
+use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InvalidActionPayloadException;
 use App\Exceptions\InvalidCredentialsException;
 use App\Exceptions\InvalidElevatedActionTokenException;
+use App\Exceptions\InvalidLedgerEntryException;
 use App\Exceptions\InvalidTotpCodeException;
 use App\Exceptions\InvalidWalletSelectionException;
+use App\Exceptions\LedgerImbalanceException;
 use App\Exceptions\TotpNotConfiguredException;
 use App\Support\ApiResponse;
 use Illuminate\Auth\AuthenticationException;
@@ -35,6 +39,73 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request, Throwable $exception): bool => $request->is('api/*')
                 || $request->expectsJson()
+        );
+        $exceptions->render(
+            function (
+                InsufficientBalanceException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::failure(
+                    message: $exception->getMessage(),
+                    code: ErrorCode::InsufficientBalance,
+                    status: 422
+                );
+            }
+        );
+
+        $exceptions->render(
+            function (
+                LedgerImbalanceException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::failure(
+                    message: $exception->getMessage(),
+                    code: ErrorCode::LedgerImbalance,
+                    status: 422
+                );
+            }
+        );
+
+        $exceptions->render(
+            function (
+                InvalidLedgerEntryException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::failure(
+                    message: $exception->getMessage(),
+                    code: ErrorCode::InvalidLedgerEntry,
+                    status: 422
+                );
+            }
+        );
+
+        $exceptions->render(
+            function (
+                DuplicateLedgerReferenceException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::failure(
+                    message: $exception->getMessage(),
+                    code: ErrorCode::DuplicateTransaction,
+                    status: 409
+                );
+            }
         );
         $exceptions->render(
             function (

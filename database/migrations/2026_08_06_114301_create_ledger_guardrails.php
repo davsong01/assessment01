@@ -185,6 +185,27 @@ END
 SQL
             );
 
+            DB::unprepared(
+                <<<'SQL'
+CREATE TRIGGER prevent_negative_user_wallet_balance
+AFTER UPDATE OF status ON ledger_transactions
+FOR EACH ROW
+WHEN NEW.status = 'posted'
+BEGIN
+    SELECT CASE
+        WHEN (
+            SELECT COALESCE(SUM(amount_subunits), 0)
+            FROM ledger_entries
+            WHERE ledger_transaction_id = NEW.id
+            AND wallet_id IN (
+                SELECT id FROM wallets WHERE type = 'user'
+            )
+        ) < 0 THEN RAISE(ABORT, 'A user wallet cannot have a negative balance.')
+    END;
+END
+SQL
+            );
+
             return;
         }
 

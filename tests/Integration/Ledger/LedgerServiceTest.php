@@ -414,3 +414,37 @@ it('rejects invalid data at the database layer', function (): void {
             ->status
     )->toBe(LedgerTransactionStatus::Pending);
 });
+
+it('rejects posting a transaction that would create a negative user wallet balance', function (): void {
+    $ctx = createLedgerContext();
+
+    $transactionId = (string) Str::uuid();
+
+    DB::table('ledger_transactions')->insert([
+        'id' => $transactionId,
+        'reference' => 'DB-NEGATIVE-BALANCE-001',
+        'type' => LedgerTransactionType::Swap->value,
+        'status' => LedgerTransactionStatus::Pending->value,
+        'metadata' => null,
+        'posted_at' => null,
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    DB::table('ledger_entries')->insert([
+        'ledger_transaction_id' => $transactionId,
+        'wallet_id' => $ctx->userNgnWallet->id,
+        'currency' => Currency::NGN->value,
+        'entry_type' => LedgerEntryType::Debit->value,
+        'amount_subunits' => -100_000,
+        'created_at' => now(),
+    ]);
+
+    expect(
+        fn () => DB::table('ledger_transactions')
+            ->where('id', $transactionId)
+            ->update([
+                'status' => LedgerTransactionStatus::Posted->value,
+            ])
+    )->toThrow(QueryException::class);
+});

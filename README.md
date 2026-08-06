@@ -769,3 +769,202 @@ CNY_CLEARING_WALLET_ID=44444444-4444-4444-8444-444444444444
 SWAP_LOCK_SECONDS=10
 
 SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
+
+# Testing
+
+The project includes unit, feature, integration, and concurrency tests.
+
+## Run the Complete Test Suite
+
+```bash
+php artisan test
+```
+
+This runs the standard automated tests for:
+
+* authentication;
+* TOTP verification;
+* Elevated Action Token issuance and validation;
+* token replay protection;
+* canonical action hashing;
+* ledger posting;
+* balance validation;
+* exchange-rate handling;
+* swap quote calculation;
+* settlement webhook signature verification.
+
+---
+
+## Run Quality Checks
+
+```bash
+composer quality
+```
+
+The Composer quality script runs:
+
+* Laravel Pint;
+* PHPStan Level 8;
+* Pest test suite.
+
+A successful run should complete without style violations, static-analysis errors, or failed tests.
+
+The individual commands are:
+
+```bash
+vendor/bin/pint --test
+vendor/bin/phpstan analyse
+php artisan test
+```
+
+To automatically fix Pint formatting issues:
+
+```bash
+vendor/bin/pint
+```
+
+---
+
+## Run a Specific Test File
+
+Examples:
+
+```bash
+php artisan test tests/Feature/Auth/LoginTest.php
+```
+
+```bash
+php artisan test tests/Feature/Security/TwoFactorChallengeTest.php
+```
+
+```bash
+php artisan test tests/Integration/Ledger/LedgerServiceTest.php
+```
+
+```bash
+php artisan test tests/Feature/Settlement/SettlementWebhookTest.php
+```
+
+```bash
+php artisan test tests/Unit/Swap/SwapQuoteCalculatorTest.php
+```
+
+---
+
+## Parallel Concurrency Test
+
+The concurrency test sends ten simultaneous HTTP swap requests for a user whose NGN wallet contains enough funds for exactly one swap.
+
+The expected result is:
+
+* exactly one request returns `200 OK`;
+* exactly nine requests return `409 Conflict` or `422 Unprocessable Entity`;
+* the source wallet does not become negative;
+* the destination wallet is credited once;
+* exactly one swap ledger transaction is posted;
+* every currency remains mathematically balanced.
+
+### Prepare the Database
+
+The test consumes the concurrency user's entire seeded NGN balance. Reset and reseed before each run:
+
+```bash
+php artisan migrate:fresh --seed
+```
+
+Seed the dedicated concurrency user:
+
+```bash
+php artisan db:seed --class=ConcurrencyTestSeeder
+```
+
+### Start a Multi-Worker Server
+
+The default single-worker PHP development server processes requests sequentially and cannot demonstrate real HTTP concurrency.
+
+Start Laravel with multiple workers:
+
+```bash
+PHP_CLI_SERVER_WORKERS=10 php artisan serve
+```
+
+Keep this terminal running.
+
+### Run the Concurrency Test
+
+Open another terminal and run:
+
+```bash
+php artisan test tests/Concurrency/SwapConcurrencyTest.php
+```
+
+Expected output:
+
+```text
+PASS  Tests\Concurrency\SwapConcurrencyTest
+✓ it allows exactly one of ten concurrent swaps
+```
+
+The database must be reset and reseeded before rerunning the concurrency test because the first successful swap consumes the available balance.
+
+---
+
+## Settlement Queue Testing
+
+The settlement webhook dispatches processing through Laravel Queues.
+
+Ensure Redis is running and start the worker:
+
+```bash
+php artisan queue:work redis
+```
+
+Then send:
+
+```text
+POST /api/webhooks/settlement
+```
+
+The endpoint should return:
+
+```text
+202 Accepted
+```
+
+The queue worker then processes the settlement state asynchronously.
+
+For automated settlement endpoint tests, the queue is faked where appropriate so the tests can verify that the expected job was dispatched.
+
+---
+
+## Postman Testing
+
+A Postman collection is included in the repository.
+
+Use this request order:
+
+1. Login
+2. 2FA Challenge
+3. Execute Swap
+4. Replay Consumed EAT
+5. Retrieve Ledger History
+6. Retrieve Wallet Balance
+7. Submit Completed Settlement
+8. Submit Duplicate Settlement
+9. Submit Out-of-Order Settlement
+10. Submit Invalid-Signature Settlement
+
+The collection automatically stores:
+
+* Sanctum bearer token;
+* Elevated Action Token;
+* swap transaction reference.
+
+Before running the 2FA request, replace the collection's `totp_code` variable with a current code generated from the seeded secret:
+
+```text
+JBSWY3DPEHPK3PXP
+```
+
+The settlement requests automatically generate the HMAC-SHA256 signature from the resolved raw request body and the collection's `settlement_secret` variable.
+

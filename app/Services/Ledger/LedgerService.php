@@ -12,6 +12,7 @@ use App\Enums\WalletType;
 use App\Exceptions\DuplicateLedgerReferenceException;
 use App\Exceptions\InsufficientBalanceException;
 use App\Exceptions\InvalidLedgerEntryException;
+use App\Exceptions\LedgerGuardrailException;
 use App\Exceptions\LedgerImbalanceException;
 use App\Models\LedgerEntry;
 use App\Models\LedgerTransaction;
@@ -45,8 +46,22 @@ final class LedgerService
                 throw new DuplicateLedgerReferenceException;
             }
 
+            if ($this->isLedgerGuardrailException($exception)) {
+                throw new LedgerGuardrailException;
+            }
+
             throw $exception;
         }
+    }
+
+    private function isLedgerGuardrailException(
+        QueryException $exception
+    ): bool {
+        return $exception->getCode() === '45000'
+            || str_contains(
+                $exception->getMessage(),
+                'SQLSTATE[45000]'
+            );
     }
 
     /**
@@ -314,6 +329,15 @@ final class LedgerService
     private function isDuplicateReferenceException(
         QueryException $exception
     ): bool {
-        return $exception->getCode() === '23000';
+        $message = $exception->getMessage();
+
+        return $exception->getCode() === '23000'
+            && str_contains($message, 'ledger_transactions')
+            && str_contains($message, 'reference')
+            && (
+                str_contains($message, 'unique')
+                || str_contains($message, 'duplicate')
+                || str_contains($message, 'already exists')
+            );
     }
 }

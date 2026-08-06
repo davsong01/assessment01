@@ -33,4 +33,6 @@ enum ErrorCode: string
     case InsufficientBalance = 'INSUFFICIENT_BALANCE';
 
     case DuplicateTransaction = 'DUPLICATE_TRANSACTION';
+
+    case LedgerGuardrail = 'LEDGER_GUARDRAIL_REJECTION';
 }

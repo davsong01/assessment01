@@ -9,6 +9,7 @@ use App\Exceptions\InvalidElevatedActionTokenException;
 use App\Exceptions\InvalidLedgerEntryException;
 use App\Exceptions\InvalidTotpCodeException;
 use App\Exceptions\InvalidWalletSelectionException;
+use App\Exceptions\LedgerGuardrailException;
 use App\Exceptions\LedgerImbalanceException;
 use App\Exceptions\TotpNotConfiguredException;
 use App\Support\ApiResponse;
@@ -40,6 +41,24 @@ return Application::configure(basePath: dirname(__DIR__))
             fn (Request $request, Throwable $exception): bool => $request->is('api/*')
                 || $request->expectsJson()
         );
+
+        $exceptions->render(
+            function (
+                LedgerGuardrailException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::failure(
+                    message: $exception->getMessage(),
+                    code: ErrorCode::LedgerGuardrail,
+                    status: 422
+                );
+            }
+        );
+
         $exceptions->render(
             function (
                 InsufficientBalanceException $exception,

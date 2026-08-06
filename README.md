@@ -9,7 +9,7 @@ This solution implements a secure wallet-to-wallet currency swap platform using 
 
 # Technology Stack
 
-- PHP 8.2+
+- PHP 8.3
 - Laravel 11
 - MySQL
 - Redis
@@ -278,14 +278,138 @@ php artisan queue:work
 
 ---
 
-# Environment
+# Environment Variables
+
+The application exposes a number of configuration options through environment variables. These allow security, concurrency, exchange-rate behaviour, and settlement processing to be adjusted without modifying the application code.
+
+---
+
+## Application
 
 ```dotenv
-CACHE_STORE=redis
-QUEUE_CONNECTION=redis
+APP_TIMEZONE=Africa/Lagos
+```
+
+| Variable | Description |
+|----------|-------------|
+| `APP_TIMEZONE` | Sets the default timezone used by the application for timestamps, logging, token expiration, and scheduled operations. |
+
+---
+
+## Step-Up Authentication
+
+```dotenv
+ELEVATED_ACTION_TOKEN_SECRET=6a68d986ce1be73cd12b15be8732ae610dffcd353d46f3f9861a75fd47627b7e
+ELEVATED_ACTION_TOKEN_TTL_SECONDS=60
+```
+
+| Variable | Description |
+|----------|-------------|
+| `ELEVATED_ACTION_TOKEN_SECRET` | Secret key used to sign Elevated Action Tokens (EAT). The server verifies every incoming EAT using this secret, ensuring the token cannot be forged or modified by a client. Keeping the secret outside the codebase allows secure rotation without redeployment. |
+| `ELEVATED_ACTION_TOKEN_TTL_SECONDS` | Defines how long an Elevated Action Token remains valid after issuance. A short lifetime reduces the window in which a stolen token could be abused while still allowing enough time for the client to complete the requested action. |
+
+---
+
+## Exchange Rate Service
+
+```dotenv
 EXCHANGE_RATE_DRIVER=mock
+
+FX_RATE_ENDPOINT=http://127.0.0.1:8001/rates
+FX_RATE_TIMEOUT_SECONDS=3
+FX_RATE_FRESH_SECONDS=30
+FX_RATE_STALE_SECONDS=300
+FX_RATE_REFRESH_LOCK_SECONDS=15
+```
+
+| Variable | Description |
+|----------|-------------|
+| `EXCHANGE_RATE_DRIVER` | Selects the exchange-rate provider implementation. The assessment uses the `mock` driver to remove any dependency on external services while allowing a production provider to be substituted through configuration. |
+| `FX_RATE_ENDPOINT` | Base URL of the HTTP exchange-rate provider. This is ignored when the mock provider is active but allows the same codebase to switch to a live provider without modification. |
+| `FX_RATE_TIMEOUT_SECONDS` | Maximum amount of time the application waits for an exchange-rate provider before treating the request as failed. This prevents long-running external requests from blocking swap execution. |
+| `FX_RATE_FRESH_SECONDS` | Duration for which a cached exchange rate is considered fresh. Requests within this period are served directly from cache, reducing latency and external API calls. |
+| `FX_RATE_STALE_SECONDS` | Maximum age for serving a stale cached exchange rate while a background refresh is triggered (Stale-While-Revalidate). This improves availability if the provider is temporarily slow or unavailable. |
+| `FX_RATE_REFRESH_LOCK_SECONDS` | Lifetime of the Redis lock used during cache refresh. It prevents multiple concurrent requests from refreshing the same exchange rate simultaneously, avoiding cache stampede problems. |
+
+---
+
+## Clearing Wallets
+
+```dotenv
+NGN_CLEARING_WALLET_ID=33333333-3333-4333-8333-333333333333
+CNY_CLEARING_WALLET_ID=44444444-4444-4444-8444-444444444444
+```
+
+| Variable | Description |
+|----------|-------------|
+| `NGN_CLEARING_WALLET_ID` | Platform clearing wallet for NGN. During a swap, funds are debited from the user's NGN wallet and credited to this wallet before the corresponding CNY movement occurs. |
+| `CNY_CLEARING_WALLET_ID` | Platform clearing wallet for CNY. This wallet acts as the balancing account when crediting the destination user's CNY wallet. Using clearing wallets ensures every currency movement remains balanced according to double-entry accounting principles. |
+
+---
+
+## Distributed Locking
+
+```dotenv
+SWAP_LOCK_SECONDS=10
+```
+
+| Variable | Description |
+|----------|-------------|
+| `SWAP_LOCK_SECONDS` | Maximum duration a Redis lock may be held while processing a swap. The lock prevents concurrent requests from spending the same funds more than once. A timeout ensures locks are automatically released if a process crashes unexpectedly. |
+
+---
+
+## Settlement Webhook
+
+```dotenv
 SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
 ```
+
+| Variable | Description |
+|----------|-------------|
+| `SETTLEMENT_WEBHOOK_SECRET` | Shared secret used to verify incoming settlement webhooks using HMAC-SHA256. Only requests signed with the correct secret are accepted, protecting the endpoint from unauthorized or tampered webhook requests. |
+
+---
+
+## Configuration Philosophy
+
+The application keeps operational behaviour configurable through environment variables rather than hardcoding values. This approach provides several benefits:
+
+- **Security** – Secrets and signing keys are managed outside the source code and can be rotated without code changes.
+- **Performance** – Cache freshness windows, timeouts, and lock durations can be tuned for different workloads.
+- **Scalability** – Different exchange-rate providers can be enabled by changing configuration instead of modifying application logic.
+- **Operational Flexibility** – Queue behaviour, locking strategy, and settlement security can be adjusted independently for development, staging, and production environments.
+
+---
+
+## Clearing Wallets
+
+```dotenv
+NGN_CLEARING_WALLET_ID=33333333-3333-4333-8333-333333333333
+CNY_CLEARING_WALLET_ID=44444444-4444-4444-8444-444444444444
+```
+
+These wallets act as the platform clearing accounts used during double-entry ledger postings.
+
+---
+
+## Distributed Locking
+
+```dotenv
+SWAP_LOCK_SECONDS=10
+```
+
+Maximum duration a swap execution lock is held in Redis.
+
+---
+
+## Settlement Webhook
+
+```dotenv
+SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
+```
+
+Shared secret used to verify incoming settlement webhook signatures using HMAC-SHA256.
 
 ---
 

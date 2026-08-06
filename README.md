@@ -1,11 +1,9 @@
 
-# TuPay Backend Assessment
+# Backend Assessment
 
 ## Overview
 
-This repository is my submission for the TuPay Backend Engineering Assessment.
-
-The solution implements a secure wallet-to-wallet currency swap platform using **Laravel 11**, **PHP 8.2+**, **MySQL**, and **Redis**. The implementation focuses on transactional integrity, double-entry accounting, step-up authentication, concurrency safety, idempotent settlement processing, and clean domain-oriented architecture.
+This solution implements a secure wallet-to-wallet currency swap platform using **Laravel 11**, **PHP 8.3**, **MySQL**, and **Redis**. The implementation focuses on transactional integrity, double-entry accounting, step-up authentication, concurrency safety, idempotent settlement processing, and clean domain-oriented architecture.
 
 ---
 

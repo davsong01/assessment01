@@ -11,6 +11,14 @@ The architecture is designed around four main requirements:
 * deterministic Redis and database locking to prevent deadlocks and double spending;
 * indexed ledger-history queries for efficient pagination.
 
+Repository Contents
+
+├── app/
+├── database/
+├── tests/
+├── TuPay Backend Assessment (Ledger & Settlement Engine).postman_collection.json
+├── README.md
+└── composer.json
 ---
 
 # Architectural Decisions
@@ -769,6 +777,44 @@ CNY_CLEARING_WALLET_ID=44444444-4444-4444-8444-444444444444
 SWAP_LOCK_SECONDS=10
 
 SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
+
+# Postman Collection
+
+A ready-to-use Postman collection is included with this repository to simplify evaluation of the implemented APIs.
+
+The collection covers the complete assessment workflow:
+
+1. Login
+2. Step-Up Authentication (TOTP Challenge)
+3. Execute Swap
+4. Retrieve Wallet Balance
+5. Retrieve Ledger History
+6. Settlement Webhook
+7. Duplicate Settlement Webhook (Idempotency)
+8. Out-of-Order Settlement Webhook
+
+The collection also includes:
+
+- Automatic storage of the Sanctum access token after login.
+- Automatic storage of the Elevated Action Token after a successful 2FA challenge.
+- Automatic generation of the `X-Settlement-Signature` HMAC-SHA256 header for settlement webhook requests.
+- Environment variables for the application URL and settlement secret.
+
+The collection can be found at:
+
+```text
+postman/
+└── TuPay Backend Assessment.postman_collection.json
+```
+
+Before running the collection:
+
+1. Import the collection into Postman.
+2. Set the `base_url` environment variable (for example, `http://127.0.0.1:8000`).
+3. Ensure MySQL, Redis, the Laravel application, and the queue worker are running.
+4. Update the `totp_code` request body with a valid code generated from the seeded TOTP secret.
+
+The requests are intended to be executed in order, allowing the reviewer to verify the complete authentication, swap, ledger, and settlement workflow with minimal manual configuration.
 
 # Testing
 

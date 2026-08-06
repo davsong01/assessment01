@@ -11,14 +11,18 @@ The architecture is designed around four main requirements:
 * deterministic Redis and database locking to prevent deadlocks and double spending;
 * indexed ledger-history queries for efficient pagination.
 
-Repository Contents
+## Repository Contents
 
+```text
 ├── app/
 ├── database/
 ├── tests/
 ├── TuPay Backend Assessment (Ledger & Settlement Engine).postman_collection.json
 ├── README.md
-└── composer.json
+├── composer.json
+└── phpstan.neon
+```
+
 ---
 
 # Architectural Decisions
@@ -52,7 +56,7 @@ Business rules are not implemented directly inside controllers.
 
 ## Service Classes
 
-Service classes encapsulate reusable domain or infrastructure logic.
+Service classes encapsulate reusable domain and infrastructure logic.
 
 ### `LedgerService`
 
@@ -74,7 +78,7 @@ Responsible for:
 
 * issuing signed Elevated Action Tokens;
 * validating token signatures;
-* checking token expiry;
+* checking token expiration;
 * binding a token to the authenticated user;
 * comparing the intended action hash with the submitted swap payload;
 * consuming the Redis token record atomically;
@@ -85,7 +89,7 @@ Responsible for:
 Responsible for:
 
 * selecting the configured exchange-rate provider;
-* retrieving NGN/CNY rates;
+* retrieving NGN/CNY exchange rates;
 * applying the Stale-While-Revalidate cache policy;
 * serving fresh or permitted stale values from Redis;
 * coordinating refresh locks to prevent cache stampedes.
@@ -128,7 +132,7 @@ The main Action is:
 App\Actions\Swap\ExecuteSwap
 ```
 
-`ExecuteSwap` coordinates the entire protected swap flow:
+`ExecuteSwap` coordinates the complete protected swap flow:
 
 1. consume and validate the Elevated Action Token;
 2. load and validate the source and destination wallets;
@@ -142,7 +146,7 @@ App\Actions\Swap\ExecuteSwap
 10. commit the database transaction;
 11. release Redis locks in a `finally` block.
 
-The Action coordinates the operation, while specialized rules remain inside the relevant services.
+The Action coordinates the operation while specialized rules remain inside the relevant services.
 
 ---
 
@@ -198,7 +202,7 @@ app/
 
 # Step-Up Token Hashing and Invalidation Mechanism
 
-Sensitive operations cannot accept a raw TOTP code directly.
+Sensitive financial operations cannot accept a raw TOTP code directly.
 
 The Step-Up flow is:
 
@@ -239,11 +243,11 @@ The challenge request includes the exact operation to authorize:
 
 The action payload is canonicalized before hashing.
 
-Canonicalization ensures that associative key ordering does not change the result. Floating-point values are rejected so that financial payloads remain deterministic.
+Canonicalization ensures that associative key ordering does not change the result. Floating-point values are rejected so financial payloads remain deterministic.
 
 A SHA-256 hash is generated from the exact canonical action payload.
 
-Therefore, changing any of the following produces a different hash:
+Changing any of the following produces a different hash:
 
 * action;
 * source wallet;
@@ -256,7 +260,7 @@ An EAT created for one payload cannot authorize another payload.
 
 ## Token Contents and Signature
 
-The Elevated Action Token contains data such as:
+The Elevated Action Token contains:
 
 * token identifier;
 * authenticated user identifier;
@@ -271,7 +275,7 @@ The token payload is cryptographically signed using:
 ELEVATED_ACTION_TOKEN_SECRET
 ```
 
-The signature protects the token against modification. A client cannot alter the user, action, amount, or expiry without invalidating the signature.
+The signature protects the token against modification. A client cannot alter the user, action, amount, or expiration without invalidating the signature.
 
 ---
 
@@ -302,7 +306,7 @@ The application verifies:
 
 The EAT is atomically consumed from Redis during the swap request.
 
-Consumption performs a read-and-delete operation as a single Redis operation. This ensures that two concurrent requests cannot both successfully use the same token.
+Consumption performs a read-and-delete operation as one Redis operation. This ensures that two concurrent requests cannot both successfully use the same token.
 
 After the first successful consumption:
 
@@ -310,7 +314,7 @@ After the first successful consumption:
 Redis token record = deleted
 ```
 
-A second request using the same EAT is rejected even when the token's 60-second cryptographic expiry has not yet elapsed.
+A second request using the same EAT is rejected even when the token's 60-second cryptographic expiration has not yet elapsed.
 
 The implementation rejects:
 
@@ -370,7 +374,7 @@ $lockNames = [
 sort($lockNames, SORT_STRING);
 ```
 
-This means every competing request attempts to acquire shared resources in the same order.
+Every competing request therefore attempts to acquire shared resources in the same order.
 
 Without deterministic ordering, two requests could behave like this:
 
@@ -384,7 +388,7 @@ locks Wallet B
 waits for Wallet A
 ```
 
-That creates a circular wait.
+This creates a circular wait.
 
 Sorting the lock names forces both requests to request Wallet A and Wallet B in the same sequence, removing that circular dependency.
 
@@ -413,7 +417,7 @@ The sequence is intentionally:
 8. Release Redis locks
 ```
 
-Redis locks are acquired before the database transaction so that the application does not hold database locks while waiting for external distributed locks.
+Redis locks are acquired before the database transaction so the application does not hold database locks while waiting for external distributed locks.
 
 ---
 
@@ -428,7 +432,7 @@ WHERE id IN (...)
 FOR UPDATE
 ```
 
-Wallet rows are also processed in deterministic identifier order.
+Wallet rows are processed in deterministic identifier order.
 
 This prevents another database transaction from validating and spending the same balance before the first transaction commits.
 
@@ -438,7 +442,7 @@ This prevents another database transaction from validating and spending the same
 
 Redis locks are released inside a `finally` block.
 
-Therefore, locks are released whether the swap:
+Locks are therefore released whether the swap:
 
 * succeeds;
 * fails validation;
@@ -463,7 +467,7 @@ GET /api/ledger/{wallet_id}
 
 returns ledger entries for one authenticated user's wallet using Laravel's native pagination.
 
-The relevant query pattern is:
+The query pattern is:
 
 ```sql
 SELECT ledger_entries.*
@@ -498,7 +502,7 @@ The endpoint always filters by one wallet:
 WHERE wallet_id = ?
 ```
 
-Placing `wallet_id` first allows MySQL to restrict the index scan to entries belonging to the requested wallet instead of scanning the full ledger table.
+Placing `wallet_id` first allows MySQL to restrict the index scan to entries belonging to the requested wallet instead of scanning the complete ledger table.
 
 ### `created_at`
 
@@ -514,7 +518,7 @@ Including `created_at` after `wallet_id` allows MySQL to retrieve entries for th
 
 Multiple ledger entries can share the same timestamp.
 
-The additional `id` ordering:
+The additional ordering:
 
 ```sql
 ORDER BY created_at DESC, id DESC
@@ -522,7 +526,7 @@ ORDER BY created_at DESC, id DESC
 
 provides deterministic pagination. Without it, rows sharing the same timestamp could appear in an inconsistent order between page requests.
 
-The composite index therefore supports both the wallet filter and the complete ordering used by the endpoint.
+The composite index supports both the wallet filter and the complete ordering used by the endpoint.
 
 ---
 
@@ -542,7 +546,7 @@ and:
 
 The history query joins ledger entries to transactions and restricts results to posted transactions.
 
-The status-based index supports efficient filtering of posted transactions, while the type/status index supports transaction-type reporting and administrative queries.
+The status-based index supports filtering posted transactions, while the type/status index supports transaction-type reporting and administrative queries.
 
 ---
 
@@ -557,7 +561,7 @@ This provides:
 * per-page count;
 * last page;
 * next and previous page URLs;
-* consistent Laravel response metadata.
+* consistent Laravel pagination metadata.
 
 The composite index limits the cost of each wallet-history page by avoiding scans over entries belonging to unrelated wallets.
 
@@ -632,9 +636,9 @@ php artisan queue:work redis
 APP_TIMEZONE=Africa/Lagos
 ```
 
-| Variable       | Purpose                                                                                                                                                                                                         |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `APP_TIMEZONE` | Controls the application's timestamp and date interpretation. Token issuance and expiry are stored as Unix timestamps, while application logs and persisted timestamps use the configured application timezone. |
+| Variable       | Purpose                                                                                                                                                                                                   |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_TIMEZONE` | Controls application timestamp and date interpretation. Token issuance and expiry are stored as Unix timestamps, while application logs and persisted timestamps use the configured application timezone. |
 
 ---
 
@@ -666,7 +670,7 @@ ELEVATED_ACTION_TOKEN_TTL_SECONDS=60
 | `ELEVATED_ACTION_TOKEN_SECRET`      | Secret used to cryptographically sign and verify Elevated Action Tokens. Generate a strong environment-specific value and do not commit production secrets to source control. |
 | `ELEVATED_ACTION_TOKEN_TTL_SECONDS` | Number of seconds an unused EAT remains valid. The assessment requires a 60-second TTL.                                                                                       |
 
-A development secret can be generated with:
+Generate a development secret with:
 
 ```bash
 php -r "echo bin2hex(random_bytes(32)).PHP_EOL;"
@@ -707,7 +711,7 @@ The assessment defaults to:
 EXCHANGE_RATE_DRIVER=mock
 ```
 
-This avoids dependence on an external FX service while retaining a configurable HTTP provider implementation.
+This removes dependence on an external FX service while retaining a configurable HTTP provider implementation.
 
 ---
 
@@ -777,60 +781,66 @@ CNY_CLEARING_WALLET_ID=44444444-4444-4444-8444-444444444444
 SWAP_LOCK_SECONDS=10
 
 SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
+```
+
+---
 
 # Postman Collection
 
-A ready-to-use Postman collection is included with this repository to simplify evaluation of the implemented APIs.
+A ready-to-use Postman collection is included with this repository.
 
-The collection covers the complete assessment workflow:
-
-1. Login
-2. Step-Up Authentication (TOTP Challenge)
-3. Execute Swap
-4. Retrieve Wallet Balance
-5. Retrieve Ledger History
-6. Settlement Webhook
-7. Duplicate Settlement Webhook (Idempotency)
-8. Out-of-Order Settlement Webhook
-
-The collection also includes:
-
-- Automatic storage of the Sanctum access token after login.
-- Automatic storage of the Elevated Action Token after a successful 2FA challenge.
-- Automatic generation of the `X-Settlement-Signature` HMAC-SHA256 header for settlement webhook requests.
-- Environment variables for the application URL and settlement secret.
-
-The collection can be found at:
+The collection file is:
 
 ```text
-postman/
-└── TuPay Backend Assessment.postman_collection.json
+TuPay Backend Assessment (Ledger & Settlement Engine).postman_collection.json
 ```
+
+It covers:
+
+1. Login
+2. Step-Up Authentication
+3. Execute Swap
+4. Replay Consumed EAT
+5. Retrieve Wallet Balance
+6. Retrieve Ledger History
+7. Completed Settlement Webhook
+8. Duplicate Settlement Webhook
+9. Out-of-Order Settlement Webhook
+10. Invalid-Signature Settlement Webhook
+
+The collection automatically stores:
+
+* the Sanctum access token;
+* the Elevated Action Token;
+* the successful swap reference.
+
+It also generates the `X-Settlement-Signature` HMAC-SHA256 header from the resolved raw request body.
 
 Before running the collection:
 
-1. Import the collection into Postman.
-2. Set the `base_url` environment variable (for example, `http://127.0.0.1:8000`).
-3. Ensure MySQL, Redis, the Laravel application, and the queue worker are running.
-4. Update the `totp_code` request body with a valid code generated from the seeded TOTP secret.
+1. import the collection into Postman;
+2. set `base_url` to `http://127.0.0.1:8000`;
+3. ensure MySQL, Redis, Laravel, and the queue worker are running;
+4. replace `totp_code` with a current code generated from the seeded TOTP secret;
+5. run the requests in their listed order.
 
-The requests are intended to be executed in order, allowing the reviewer to verify the complete authentication, swap, ledger, and settlement workflow with minimal manual configuration.
+---
 
 # Testing
 
 The project includes unit, feature, integration, and concurrency tests.
 
-## Run the Complete Test Suite
+## Run the Standard Test Suite
 
 ```bash
 php artisan test
 ```
 
-This runs the standard automated tests for:
+The standard suite covers:
 
 * authentication;
 * TOTP verification;
-* Elevated Action Token issuance and validation;
+* EAT issuance and validation;
 * token replay protection;
 * canonical action hashing;
 * ledger posting;
@@ -851,22 +861,54 @@ The Composer quality script runs:
 
 * Laravel Pint;
 * PHPStan Level 8;
-* Pest test suite.
-
-A successful run should complete without style violations, static-analysis errors, or failed tests.
+* Pest tests.
 
 The individual commands are:
 
 ```bash
 vendor/bin/pint --test
-vendor/bin/phpstan analyse
+vendor/bin/phpstan analyse --no-progress
 php artisan test
 ```
 
-To automatically fix Pint formatting issues:
+Automatically fix Pint formatting issues with:
 
 ```bash
 vendor/bin/pint
+```
+
+---
+
+## Assessment Verification
+
+The assessment allows either a green CI workflow or localized instructions proving that PHPStan Level 8 and the parallel concurrency test pass.
+
+This repository includes reproducible local verification commands.
+
+### PHPStan Level 8
+
+The PHPStan configuration is located at:
+
+```text
+phpstan.neon
+```
+
+Run:
+
+```bash
+vendor/bin/phpstan analyse --no-progress
+```
+
+Expected result:
+
+```text
+[OK] No errors
+```
+
+PHPStan is also included in:
+
+```bash
+composer quality
 ```
 
 ---
@@ -901,18 +943,20 @@ php artisan test tests/Unit/Swap/SwapQuoteCalculatorTest.php
 
 The concurrency test sends ten simultaneous HTTP swap requests for a user whose NGN wallet contains enough funds for exactly one swap.
 
-The expected result is:
+It verifies that:
 
 * exactly one request returns `200 OK`;
 * exactly nine requests return `409 Conflict` or `422 Unprocessable Entity`;
 * the source wallet does not become negative;
 * the destination wallet is credited once;
 * exactly one swap ledger transaction is posted;
-* every currency remains mathematically balanced.
+* every currency remains balanced.
 
 ### Prepare the Database
 
-The test consumes the concurrency user's entire seeded NGN balance. Reset and reseed before each run:
+The test consumes the concurrency user's entire seeded NGN balance.
+
+Reset and seed the database before every run:
 
 ```bash
 php artisan migrate:fresh --seed
@@ -936,22 +980,22 @@ PHP_CLI_SERVER_WORKERS=10 php artisan serve
 
 Keep this terminal running.
 
-### Run the Concurrency Test
+### Run the Test
 
-Open another terminal and run:
+Open a second terminal:
 
 ```bash
 php artisan test tests/Concurrency/SwapConcurrencyTest.php
 ```
 
-Expected output:
+Expected result:
 
 ```text
 PASS  Tests\Concurrency\SwapConcurrencyTest
 ✓ it allows exactly one of ten concurrent swaps
 ```
 
-The database must be reset and reseeded before rerunning the concurrency test because the first successful swap consumes the available balance.
+The database must be reset and reseeded before rerunning the test because the successful request consumes the concurrency wallet's available balance.
 
 ---
 
@@ -959,19 +1003,19 @@ The database must be reset and reseeded before rerunning the concurrency test be
 
 The settlement webhook dispatches processing through Laravel Queues.
 
-Ensure Redis is running and start the worker:
+Ensure Redis is running, then start the worker:
 
 ```bash
 php artisan queue:work redis
 ```
 
-Then send:
+Send:
 
 ```text
 POST /api/webhooks/settlement
 ```
 
-The endpoint should return:
+The endpoint should immediately return:
 
 ```text
 202 Accepted
@@ -979,38 +1023,12 @@ The endpoint should return:
 
 The queue worker then processes the settlement state asynchronously.
 
-For automated settlement endpoint tests, the queue is faked where appropriate so the tests can verify that the expected job was dispatched.
-
 ---
 
-## Postman Testing
+## CI Workflow
 
-A Postman collection is included in the repository.
+The localized commands in this README remain the authoritative, reproducible process for verifying:
 
-Use this request order:
-
-1. Login
-2. 2FA Challenge
-3. Execute Swap
-4. Replay Consumed EAT
-5. Retrieve Ledger History
-6. Retrieve Wallet Balance
-7. Submit Completed Settlement
-8. Submit Duplicate Settlement
-9. Submit Out-of-Order Settlement
-10. Submit Invalid-Signature Settlement
-
-The collection automatically stores:
-
-* Sanctum bearer token;
-* Elevated Action Token;
-* swap transaction reference.
-
-Before running the 2FA request, replace the collection's `totp_code` variable with a current code generated from the seeded secret:
-
-```text
-JBSWY3DPEHPK3PXP
-```
-
-The settlement requests automatically generate the HMAC-SHA256 signature from the resolved raw request body and the collection's `settlement_secret` variable.
-
+* PHPStan Level 8;
+* the standard automated test suite;
+* the real parallel concurrency test.

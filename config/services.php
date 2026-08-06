@@ -51,4 +51,10 @@ return [
         ),
     ],
 
+    'settlement' => [
+        'webhook_secret' => env(
+            'SETTLEMENT_WEBHOOK_SECRET'
+        ),
+    ],
+
 ];

@@ -1,66 +1,284 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# TuPay Backend Assessment
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+## Overview
 
-## About Laravel
+This project is my submission for the TuPay Backend Engineering Assessment.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+The solution implements a secure wallet-to-wallet currency swap service using Laravel 12, Redis, MySQL and a double-entry ledger architecture. The implementation focuses on correctness, transactional integrity, concurrency safety and production-oriented design while keeping the codebase simple and maintainable.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+---
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+# Tech Stack
 
-## Learning Laravel
+* PHP 8.4
+* Laravel 12
+* MySQL
+* Redis
+* Laravel Queues
+* Laravel Sanctum
+* Google2FA
+* Pest
+* PHPStan (Level 8)
+* Laravel Pint
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+---
 
-You may also try the [Laravel Bootcamp](https://bootcamp.laravel.com), where you will be guided through building a modern Laravel application from scratch.
+# Features Implemented
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+## Authentication
 
-## Laravel Sponsors
+* Email/password authentication
+* Laravel Sanctum API tokens
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+## Step-Up Authentication
 
-### Premium Partners
+* TOTP verification using Google Authenticator
+* Elevated Action Token (EAT)
+* One-time use EAT
+* Payload binding
+* Expiration support
+* Replay attack protection
 
-- **[Vehikl](https://vehikl.com/)**
-- **[Tighten Co.](https://tighten.co)**
-- **[WebReinvent](https://webreinvent.com/)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel/)**
-- **[Cyber-Duck](https://cyber-duck.co.uk)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Jump24](https://jump24.co.uk)**
-- **[Redberry](https://redberry.international/laravel/)**
-- **[Active Logic](https://activelogic.com)**
-- **[byte5](https://byte5.de)**
-- **[OP.GG](https://op.gg)**
+## Wallet Swap
 
-## Contributing
+* Currency validation
+* Balance validation
+* Exchange rate service
+* Atomic ledger posting
+* Double-entry accounting
+* Transaction rollback on failure
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+## Ledger
 
-## Code of Conduct
+* Double-entry ledger
+* Immutable posted transactions
+* Ledger history endpoint
+* Wallet balance endpoint
+* Per-currency balancing
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## Settlement Webhook
 
-## Security Vulnerabilities
+* HMAC-SHA256 signature verification
+* SQL-based idempotency
+* Out-of-order webhook handling
+* Asynchronous processing using Laravel Queues
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+## Concurrency Protection
 
-## License
+* Redis distributed locking
+* Prevents double spending
+* Atomic swap execution
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+---
+
+# Project Structure
+
+```
+app/
+ ├── Actions
+ ├── Data
+ ├── Enums
+ ├── Exceptions
+ ├── Http
+ ├── Jobs
+ ├── Models
+ ├── Responses
+ ├── Services
+ │     ├── Cache
+ │     ├── ExchangeRate
+ │     ├── Ledger
+ │     ├── Locks
+ │     ├── Settlement
+ │     └── Swap
+ └── Support
+```
+
+---
+
+# Installation
+
+```bash
+composer install
+
+cp .env.example .env
+
+php artisan key:generate
+```
+
+Configure:
+
+* MySQL
+* Redis
+
+Then run:
+
+```bash
+php artisan migrate --seed
+```
+
+Start the application:
+
+```bash
+php artisan serve
+```
+
+Start the queue worker:
+
+```bash
+php artisan queue:work
+```
+
+---
+
+# Environment Variables
+
+```
+CACHE_STORE=redis
+
+QUEUE_CONNECTION=redis
+
+EXCHANGE_RATE_DRIVER=mock
+
+SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
+```
+
+---
+
+# Test User
+
+```
+Email:
+davsong@gmail.com
+
+Password:
+password
+```
+
+The TOTP secret seeded into the database is:
+
+```
+JBSWY3DPEHPK3PXP
+```
+
+Import this secret into Google Authenticator to generate valid TOTP codes.
+
+---
+
+# API Walkthrough
+
+The repository includes a Postman collection demonstrating the complete flow.
+
+Sequence:
+
+1. Login
+2. Generate Elevated Action Token
+3. Execute Swap
+4. View Ledger History
+5. View Wallet Balance
+6. Submit Settlement Webhook
+
+---
+
+# Concurrency Test
+
+The project includes a concurrency test demonstrating protection against double spending using Redis distributed locking.
+
+Before running the test:
+
+```bash
+php artisan migrate:fresh --seed
+
+php artisan db:seed --class=ConcurrencyTestSeeder
+```
+
+Start the application with multiple PHP workers:
+
+```bash
+PHP_CLI_SERVER_WORKERS=10 php artisan serve
+```
+
+Run the concurrency test:
+
+```bash
+php artisan test tests/Concurrency/SwapConcurrencyTest.php
+```
+
+Expected result:
+
+* Exactly one request succeeds
+* Nine requests fail
+* Wallet balance never becomes negative
+* Ledger remains balanced
+
+---
+
+# Running Tests
+
+Run the complete test suite:
+
+```bash
+php artisan test
+```
+
+Run static analysis:
+
+```bash
+vendor/bin/phpstan analyse
+```
+
+Run code style checks:
+
+```bash
+vendor/bin/pint
+```
+
+Or run everything together:
+
+```bash
+composer quality
+```
+
+---
+
+# Design Decisions
+
+### Double-entry Ledger
+
+Every financial transaction creates equal debit and credit entries, ensuring that each currency always balances to zero.
+
+### Redis Distributed Locking
+
+Swap execution uses Redis locks to prevent concurrent requests from spending the same balance.
+
+### Elevated Action Token
+
+Sensitive financial actions require a short-lived signed token issued after successful TOTP verification.
+
+### Settlement Processing
+
+Settlement webhooks are authenticated using HMAC-SHA256 signatures and processed asynchronously through Laravel Queues.
+
+Duplicate webhook deliveries are handled safely using a unique `provider_reference`, while out-of-order events are ignored through state transition checks.
+
+### Exchange Rate Provider
+
+The exchange rate service is provider-driven and configurable via environment variables. A mock provider is supplied for the assessment.
+
+---
+
+# Future Improvements
+
+Potential production enhancements include:
+
+* Real exchange-rate provider integration
+* Multi-provider settlement support
+* Dead-letter queue handling
+* Settlement retry policies
+* Redis-backed idempotency keys
+* Event sourcing
+* Metrics and observability
+* OpenAPI / Swagger documentation
+
+---
+
+Thank you for reviewing my submission.

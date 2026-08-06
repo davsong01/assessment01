@@ -3,7 +3,6 @@
 declare(strict_types=1);
 
 use App\Services\Swap\SwapQuoteCalculator;
-use InvalidArgumentException;
 
 it('converts subunits without floating point math', function (): void {
     $calculator = new SwapQuoteCalculator;

@@ -87,7 +87,7 @@ class AppServiceProvider extends ServiceProvider
             function (Request $request): Limit {
                 $userId = $request->user()?->getAuthIdentifier();
 
-                return Limit::perMinute(5)
+                return Limit::perMinute(15)
                     ->by(
                         sprintf(
                             '%s|%s',

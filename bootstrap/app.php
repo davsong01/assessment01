@@ -15,6 +15,7 @@ use App\Exceptions\LedgerGuardrailException;
 use App\Exceptions\LedgerImbalanceException;
 use App\Exceptions\SwapConflictException;
 use App\Exceptions\TotpNotConfiguredException;
+use App\Http\Middleware\VerifySettlementSignature;
 use App\Support\ApiResponse;
 use Illuminate\Auth\AuthenticationException;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -36,9 +37,13 @@ return Application::configure(basePath: dirname(__DIR__))
         api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
-    )
-    ->withMiddleware(function (Middleware $middleware) {
-        //
+    )->withMiddleware(function (Middleware $middleware): void {
+        $middleware->redirectGuestsTo(
+            fn (Request $request): ?string => null
+        );
+        $middleware->alias([
+            'settlement.signature' => VerifySettlementSignature::class,
+        ]);
     })->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request, Throwable $exception): bool => $request->is('api/*')

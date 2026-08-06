@@ -1,288 +1,622 @@
-
 # Backend Assessment
 
 ## Overview
 
-This solution implements a secure wallet-to-wallet currency swap platform using **Laravel 11**, **PHP 8.3**, **MySQL**, and **Redis**. The implementation focuses on transactional integrity, double-entry accounting, step-up authentication, concurrency safety, idempotent settlement processing, and clean domain-oriented architecture.
+This project implements a secure NGN/CNY wallet swap engine using **PHP 8.3**, **Laravel 11**, **MySQL**, and **Redis**.
 
----
+The architecture is designed around four main requirements:
 
-# Technology Stack
-
-- PHP 8.3
-- Laravel 11
-- MySQL
-- Redis
-- Laravel Sanctum
-- Google2FA
-- Laravel Queues
-- Pest
-- PHPStan (Level 8)
-- Laravel Pint
-
----
-
-# Features
-
-- Sanctum Authentication
-- Step-Up Authentication (TOTP + Elevated Action Token)
-- Wallet-to-Wallet Currency Swap
-- Double-Entry Ledger
-- Exchange Rate Provider Abstraction
-- Redis Distributed Locking
-- Idempotent Settlement Webhook
-- Queue-based Settlement Processing
-- Ledger History API
-- Wallet Balance API
-- Concurrency Protection
-
----
-
-# Solution Architecture
-
-```text
-                 Client
-                    │
-                    ▼
-             API Controllers
-                    │
-                    ▼
-                 Actions
-                    │
-                    ▼
-             Domain Services
-     ┌──────────┬──────────┬──────────┐
-     │          │          │          │
-  Ledger     Swap     Settlement  ExchangeRate
-     │          │          │
-     └──────────┴──────────┘
-             Redis / MySQL
-```
-
-Controllers only coordinate requests. Business logic lives inside Actions and Services.
+* clear separation of responsibilities through Services, Actions, and typed domain data;
+* action-bound Step-Up authentication using short-lived Elevated Action Tokens;
+* deterministic Redis and database locking to prevent deadlocks and double spending;
+* indexed ledger-history queries for efficient pagination.
 
 ---
 
 # Architectural Decisions
 
+## Request Flow
+
+```text
+HTTP Request
+    │
+    ▼
+Request Validation
+    │
+    ▼
+Controller
+    │
+    ▼
+Action
+    │
+    ▼
+Domain Services
+    │
+    ├── Redis
+    └── MySQL
+```
+
+Controllers are intentionally thin. They receive validated requests, invoke the relevant Action or Service, and return a standardized API response.
+
+Business rules are not implemented directly inside controllers.
+
+---
+
 ## Service Classes
 
-- LedgerService – Double-entry posting
-- ExchangeRateService – Exchange rate retrieval
-- SettlementService – Settlement state transitions
-- CacheService – Generic cache abstraction
-- RedisLockService – Distributed locking
-- ElevatedActionTokenService – EAT lifecycle
+Service classes encapsulate reusable domain or infrastructure logic.
+
+### `LedgerService`
+
+Responsible for:
+
+* validating ledger postings;
+* confirming that every transaction contains at least two entries;
+* ensuring entries are balanced independently for each currency;
+* calculating wallet balances from posted ledger entries;
+* preventing user-wallet overdrafts;
+* inserting ledger transactions and entries atomically;
+* applying pessimistic row locking to participating wallets.
+
+The wallet table does not contain a mutable balance column. The ledger remains the source of truth.
+
+### `ElevatedActionTokenService`
+
+Responsible for:
+
+* issuing signed Elevated Action Tokens;
+* validating token signatures;
+* checking token expiry;
+* binding a token to the authenticated user;
+* comparing the intended action hash with the submitted swap payload;
+* consuming the Redis token record atomically;
+* preventing token replay.
+
+### `ExchangeRateService`
+
+Responsible for:
+
+* selecting the configured exchange-rate provider;
+* retrieving NGN/CNY rates;
+* applying the Stale-While-Revalidate cache policy;
+* serving fresh or permitted stale values from Redis;
+* coordinating refresh locks to prevent cache stampedes.
+
+### `RedisLockService`
+
+Responsible for creating Redis-backed distributed locks.
+
+It is used by the swap Action to ensure that competing requests cannot execute against the same user and wallets simultaneously.
+
+### `SettlementService`
+
+Responsible for:
+
+* processing settlement events dispatched through Laravel Queues;
+* enforcing monotonic settlement-state transitions;
+* ignoring duplicate or older provider events;
+* using the unique `provider_reference` constraint for SQL-level idempotency.
+
+### `CacheService`
+
+Provides generic cache operations such as:
+
+* `get`;
+* `put`;
+* `remember`;
+* `forget`.
+
+Distributed locking is intentionally kept outside this service because Laravel's generic cache repository contract does not expose the lock API required by PHPStan Level 8.
+
+---
 
 ## Actions
 
-Actions encapsulate business use-cases.
+Actions represent complete business use cases.
 
-Example:
+The main Action is:
 
-- ExecuteSwap
+```text
+App\Actions\Swap\ExecuteSwap
+```
 
-This keeps controllers thin while making business logic independently testable.
+`ExecuteSwap` coordinates the entire protected swap flow:
 
-## Domain Structure
+1. consume and validate the Elevated Action Token;
+2. load and validate the source and destination wallets;
+3. build the Redis lock names;
+4. sort and acquire all distributed locks;
+5. configure `REPEATABLE READ` transaction isolation;
+6. open the SQL transaction;
+7. retrieve the exchange rate;
+8. calculate conversion, spread, and Banker's Rounding;
+9. post the balanced ledger transaction;
+10. commit the database transaction;
+11. release Redis locks in a `finally` block.
+
+The Action coordinates the operation, while specialized rules remain inside the relevant services.
+
+---
+
+## Domain Structures
+
+Typed domain objects are used instead of passing loosely structured arrays through the application.
+
+Examples include:
+
+```text
+LedgerPostingData
+LedgerEntryData
+ElevatedActionPayload
+ElevatedActionTokenData
+ExchangeRateData
+SwapQuoteData
+```
+
+These objects provide:
+
+* explicit constructor requirements;
+* predictable data structures;
+* reduced runtime ambiguity;
+* stronger PHPStan analysis;
+* separation between HTTP payloads and domain operations.
+
+The main domain organization is:
 
 ```text
 app/
-    Actions/
-    Data/
-    Enums/
-    Http/
-    Models/
-    Services/
-        Ledger/
-        Settlement/
-        ExchangeRate/
-        Locks/
-        Cache/
-        Swap/
+├── Actions/
+│   └── Swap/
+├── Data/
+│   ├── Ledger/
+│   ├── Security/
+│   ├── ExchangeRate/
+│   └── Swap/
+├── Enums/
+├── Models/
+├── Services/
+│   ├── Ledger/
+│   ├── Security/
+│   ├── ExchangeRate/
+│   ├── Settlement/
+│   ├── Swap/
+│   ├── Cache/
+│   └── Locks/
+├── Responses/
+└── Support/
 ```
 
 ---
 
-# Step-Up Authentication
+# Step-Up Token Hashing and Invalidation Mechanism
 
-Financial operations require:
+Sensitive operations cannot accept a raw TOTP code directly.
 
-1. Sanctum authentication
-2. Elevated Action Token (EAT)
-
-Flow:
+The Step-Up flow is:
 
 ```text
-Login
- ↓
-Sanctum Token
- ↓
+Sanctum Authentication
+        │
+        ▼
+POST /api/2fa/challenge
+        │
+        ▼
 Verify TOTP
- ↓
-Issue Elevated Action Token
- ↓
-Execute Swap
+        │
+        ▼
+Hash Exact Action Payload
+        │
+        ▼
+Issue 60-second EAT
+        │
+        ▼
+POST /api/swap
+        │
+        ▼
+Atomically Consume EAT
 ```
 
-## Token Hashing
+## Action-Payload Hashing
 
-The Elevated Action Token is never stored in plaintext.
+The challenge request includes the exact operation to authorize:
 
-The implementation:
+```json
+{
+  "action": "swap",
+  "source_wallet_id": "11111111-1111-4111-8111-111111111111",
+  "destination_wallet_id": "22222222-2222-4222-8222-222222222222",
+  "source_amount_subunits": 10000000
+}
+```
 
-1. Generates a random token identifier.
-2. Hashes the identifier using SHA-256.
-3. Stores only the hash in Redis together with the action metadata.
-4. Returns the signed token to the client.
+The action payload is canonicalized before hashing.
 
-During verification the incoming identifier is hashed again before comparison.
+Canonicalization ensures that associative key ordering does not change the result. Floating-point values are rejected so that financial payloads remain deterministic.
 
-## Token Invalidation
+A SHA-256 hash is generated from the exact canonical action payload.
 
-Immediately after successful verification:
+Therefore, changing any of the following produces a different hash:
 
-- Redis entry is deleted.
-- Replay attacks are prevented.
-- Tokens remain one-time use.
-- Redis TTL expires unused tokens automatically.
+* action;
+* source wallet;
+* destination wallet;
+* source amount.
+
+An EAT created for one payload cannot authorize another payload.
 
 ---
 
-# Swap Execution
+## Token Contents and Signature
+
+The Elevated Action Token contains data such as:
+
+* token identifier;
+* authenticated user identifier;
+* action;
+* action hash;
+* issued timestamp;
+* expiration timestamp.
+
+The token payload is cryptographically signed using:
+
+```dotenv
+ELEVATED_ACTION_TOKEN_SECRET
+```
+
+The signature protects the token against modification. A client cannot alter the user, action, amount, or expiry without invalidating the signature.
+
+---
+
+## Redis Storage
+
+The signed token alone is not sufficient to authorize the swap.
+
+A corresponding server-side record is stored in Redis with the configured TTL:
+
+```dotenv
+ELEVATED_ACTION_TOKEN_TTL_SECONDS=60
+```
+
+The Redis record represents the token's active, single-use state.
+
+The application verifies:
+
+* token signature;
+* token expiration;
+* authenticated user identifier;
+* expected action;
+* exact action hash;
+* existence of the Redis record.
+
+---
+
+## Atomic Invalidation
+
+The EAT is atomically consumed from Redis during the swap request.
+
+Consumption performs a read-and-delete operation as a single Redis operation. This ensures that two concurrent requests cannot both successfully use the same token.
+
+After the first successful consumption:
 
 ```text
-Acquire Redis Lock
- ↓
-Validate Wallets
- ↓
-Validate Balance
- ↓
-Fetch Exchange Rate
- ↓
-Calculate Quote
- ↓
-Begin Transaction
- ↓
-Create Ledger Posting
- ↓
-Commit
- ↓
-Release Lock
+Redis token record = deleted
 ```
 
----
+A second request using the same EAT is rejected even when the token's 60-second cryptographic expiry has not yet elapsed.
 
-# Double-Entry Ledger
+The implementation rejects:
 
-Every movement creates balanced debit and credit entries.
-
-Balances are derived from immutable ledger entries rather than mutable balance columns.
-
----
-
-# Deadlock Prevention
-
-Redis distributed locks protect swap execution.
-
-Locks are acquired before the database transaction begins.
-
-Wallet identifiers are ordered deterministically before generating the lock key, ensuring identical lock acquisition order regardless of request direction and preventing circular wait conditions.
+* expired tokens;
+* replayed tokens;
+* tokens with invalid signatures;
+* tokens issued for another user;
+* tokens issued for another action;
+* tokens whose payload parameters were changed.
 
 ---
 
-# Settlement Processing
+# Deadlock Prevention and Lock Acquisition Order
 
-Webhook flow:
+The swap flow uses two layers of concurrency protection:
+
+1. Redis distributed locks;
+2. MySQL pessimistic row locks.
+
+---
+
+## Non-Blocking Redis Locks
+
+Before opening the SQL transaction, the swap Action creates three lock names:
 
 ```text
-Provider
- ↓
-Verify HMAC Signature
- ↓
-Dispatch Queue
- ↓
-SettlementService
- ↓
-Persist State
+swap:user:{user_id}
+swap:wallet:{source_wallet_id}
+swap:wallet:{destination_wallet_id}
 ```
 
-Features:
+The locks are non-blocking.
 
-- HMAC-SHA256 verification
-- SQL-backed idempotency
-- Queue processing
-- Out-of-order event handling
-- Monotonic state transitions
+If another operation already owns one of the required locks, the request fails immediately with a conflict response instead of waiting indefinitely.
+
+This protects against:
+
+* simultaneous swaps by the same user;
+* concurrent spending from the same source wallet;
+* competing operations involving the same destination wallet.
 
 ---
 
-# Database Indexing
+## Deterministic Lock Ordering
 
-## Ledger Entries
+The complete list of lock names is sorted using strict string ordering before acquisition.
 
-Composite index:
+Conceptually:
 
-```sql
-(wallet_id, created_at)
+```php
+$lockNames = [
+    'swap:user:'.$userId,
+    'swap:wallet:'.$sourceWalletId,
+    'swap:wallet:'.$destinationWalletId,
+];
+
+sort($lockNames, SORT_STRING);
 ```
 
-Optimises:
+This means every competing request attempts to acquire shared resources in the same order.
+
+Without deterministic ordering, two requests could behave like this:
+
+```text
+Request A:
+locks Wallet A
+waits for Wallet B
+
+Request B:
+locks Wallet B
+waits for Wallet A
+```
+
+That creates a circular wait.
+
+Sorting the lock names forces both requests to request Wallet A and Wallet B in the same sequence, removing that circular dependency.
+
+---
+
+## Partial Acquisition Cleanup
+
+If the Action acquires one or two locks but fails to acquire the next lock, all previously acquired locks are released before the exception is rethrown.
+
+This prevents leaked partial locks.
+
+---
+
+## Database Transaction Order
+
+The sequence is intentionally:
+
+```text
+1. Acquire sorted Redis locks
+2. Set REPEATABLE READ isolation
+3. Open SQL transaction
+4. Lock participating wallet rows
+5. Validate balances
+6. Insert ledger transaction and entries
+7. Commit
+8. Release Redis locks
+```
+
+Redis locks are acquired before the database transaction so that the application does not hold database locks while waiting for external distributed locks.
+
+---
+
+## Pessimistic Row Locking
+
+Inside the SQL transaction, participating wallet records are selected using pessimistic locking:
 
 ```sql
 SELECT ...
-FROM ledger_entries
-WHERE wallet_id = ?
-ORDER BY created_at DESC
-LIMIT ...
+FROM wallets
+WHERE id IN (...)
+FOR UPDATE
 ```
 
-This supports efficient pagination for `GET /api/ledger/{wallet_id}`.
+Wallet rows are also processed in deterministic identifier order.
 
-## Ledger Transactions
-
-Indexes:
-
-- (status, created_at)
-- (type, status)
-
-These support reporting and transaction history queries.
-
-## Settlements
-
-Unique index:
-
-```
-provider_reference
-```
-
-Provides SQL-level idempotency.
+This prevents another database transaction from validating and spending the same balance before the first transaction commits.
 
 ---
 
-# Installation
+## Guaranteed Lock Release
+
+Redis locks are released inside a `finally` block.
+
+Therefore, locks are released whether the swap:
+
+* succeeds;
+* fails validation;
+* encounters insufficient balance;
+* encounters an exchange-rate error;
+* fails during ledger posting;
+* rolls back the SQL transaction.
+
+Locks are released in reverse acquisition order.
+
+The configured lock TTL also provides automatic recovery if the PHP process terminates unexpectedly.
+
+---
+
+# Database Indexing Rationale for Ledger Pagination
+
+The endpoint:
+
+```text
+GET /api/ledger/{wallet_id}
+```
+
+returns ledger entries for one authenticated user's wallet using Laravel's native pagination.
+
+The relevant query pattern is:
+
+```sql
+SELECT ledger_entries.*
+FROM ledger_entries
+INNER JOIN ledger_transactions
+    ON ledger_transactions.id =
+        ledger_entries.ledger_transaction_id
+WHERE ledger_entries.wallet_id = ?
+  AND ledger_transactions.status = 'posted'
+ORDER BY ledger_entries.created_at DESC,
+         ledger_entries.id DESC
+LIMIT ? OFFSET ?;
+```
+
+---
+
+## Ledger-History Composite Index
+
+The ledger-entry history index is:
+
+```sql
+(wallet_id, created_at, id)
+```
+
+Each index column serves a specific purpose.
+
+### `wallet_id`
+
+The endpoint always filters by one wallet:
+
+```sql
+WHERE wallet_id = ?
+```
+
+Placing `wallet_id` first allows MySQL to restrict the index scan to entries belonging to the requested wallet instead of scanning the full ledger table.
+
+### `created_at`
+
+Ledger history is returned newest first:
+
+```sql
+ORDER BY created_at DESC
+```
+
+Including `created_at` after `wallet_id` allows MySQL to retrieve entries for the wallet in chronological order with reduced sorting work.
+
+### `id`
+
+Multiple ledger entries can share the same timestamp.
+
+The additional `id` ordering:
+
+```sql
+ORDER BY created_at DESC, id DESC
+```
+
+provides deterministic pagination. Without it, rows sharing the same timestamp could appear in an inconsistent order between page requests.
+
+The composite index therefore supports both the wallet filter and the complete ordering used by the endpoint.
+
+---
+
+## Ledger-Transaction Indexes
+
+The `ledger_transactions` table includes:
+
+```sql
+(status, created_at)
+```
+
+and:
+
+```sql
+(type, status)
+```
+
+The history query joins ledger entries to transactions and restricts results to posted transactions.
+
+The status-based index supports efficient filtering of posted transactions, while the type/status index supports transaction-type reporting and administrative queries.
+
+---
+
+## Pagination Choice
+
+The endpoint uses Laravel's native `LengthAwarePaginator`.
+
+This provides:
+
+* current page;
+* total entries;
+* per-page count;
+* last page;
+* next and previous page URLs;
+* consistent Laravel response metadata.
+
+The composite index limits the cost of each wallet-history page by avoiding scans over entries belonging to unrelated wallets.
+
+---
+
+# Setup
+
+## Requirements
+
+Install:
+
+* PHP 8.2 or later;
+* Composer;
+* MySQL 8.0 or later;
+* Redis;
+* BCMath PHP extension;
+* PDO MySQL PHP extension.
+
+---
+
+## Install Dependencies
 
 ```bash
 composer install
-cp .env.example .env
-php artisan key:generate
-php artisan migrate --seed
 ```
 
-Run:
+Create the environment file:
+
+```bash
+cp .env.example .env
+```
+
+Generate the Laravel application key:
+
+```bash
+php artisan key:generate
+```
+
+Configure the MySQL and Redis connection values in `.env`.
+
+Run migrations and seed the assessment data:
+
+```bash
+php artisan migrate:fresh --seed
+```
+
+Clear cached configuration:
+
+```bash
+php artisan optimize:clear
+```
+
+Start the application:
 
 ```bash
 php artisan serve
-php artisan queue:work
+```
+
+Start the Redis queue worker in another terminal:
+
+```bash
+php artisan queue:work redis
 ```
 
 ---
 
 # Environment Variables
-
-The application exposes a number of configuration options through environment variables. These allow security, concurrency, exchange-rate behaviour, and settlement processing to be adjusted without modifying the application code.
-
----
 
 ## Application
 
@@ -290,27 +624,55 @@ The application exposes a number of configuration options through environment va
 APP_TIMEZONE=Africa/Lagos
 ```
 
-| Variable | Description |
-|----------|-------------|
-| `APP_TIMEZONE` | Sets the default timezone used by the application for timestamps, logging, token expiration, and scheduled operations. |
+| Variable       | Purpose                                                                                                                                                                                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `APP_TIMEZONE` | Controls the application's timestamp and date interpretation. Token issuance and expiry are stored as Unix timestamps, while application logs and persisted timestamps use the configured application timezone. |
 
 ---
 
-## Step-Up Authentication
+## Cache, Queue, and Redis
 
 ```dotenv
-ELEVATED_ACTION_TOKEN_SECRET=6a68d986ce1be73cd12b15be8732ae610dffcd353d46f3f9861a75fd47627b7e
+CACHE_STORE=redis
+QUEUE_CONNECTION=redis
+```
+
+| Variable           | Purpose                                                                                                   |
+| ------------------ | --------------------------------------------------------------------------------------------------------- |
+| `CACHE_STORE`      | Uses Redis for exchange-rate caching and other cache-backed application operations.                       |
+| `QUEUE_CONNECTION` | Sends settlement-processing jobs to Redis so webhook requests can return immediately with `202 Accepted`. |
+
+A Redis server must be running before testing locks, EAT consumption, caching, queues, or concurrency.
+
+---
+
+## Elevated Action Tokens
+
+```dotenv
+ELEVATED_ACTION_TOKEN_SECRET=
 ELEVATED_ACTION_TOKEN_TTL_SECONDS=60
 ```
 
-| Variable | Description |
-|----------|-------------|
-| `ELEVATED_ACTION_TOKEN_SECRET` | Secret key used to sign Elevated Action Tokens (EAT). The server verifies every incoming EAT using this secret, ensuring the token cannot be forged or modified by a client. Keeping the secret outside the codebase allows secure rotation without redeployment. |
-| `ELEVATED_ACTION_TOKEN_TTL_SECONDS` | Defines how long an Elevated Action Token remains valid after issuance. A short lifetime reduces the window in which a stolen token could be abused while still allowing enough time for the client to complete the requested action. |
+| Variable                            | Purpose                                                                                                                                                                       |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ELEVATED_ACTION_TOKEN_SECRET`      | Secret used to cryptographically sign and verify Elevated Action Tokens. Generate a strong environment-specific value and do not commit production secrets to source control. |
+| `ELEVATED_ACTION_TOKEN_TTL_SECONDS` | Number of seconds an unused EAT remains valid. The assessment requires a 60-second TTL.                                                                                       |
+
+A development secret can be generated with:
+
+```bash
+php -r "echo bin2hex(random_bytes(32)).PHP_EOL;"
+```
+
+Copy the generated value into:
+
+```dotenv
+ELEVATED_ACTION_TOKEN_SECRET=generated-value
+```
 
 ---
 
-## Exchange Rate Service
+## Exchange-Rate Service
 
 ```dotenv
 EXCHANGE_RATE_DRIVER=mock
@@ -322,14 +684,22 @@ FX_RATE_STALE_SECONDS=300
 FX_RATE_REFRESH_LOCK_SECONDS=15
 ```
 
-| Variable | Description |
-|----------|-------------|
-| `EXCHANGE_RATE_DRIVER` | Selects the exchange-rate provider implementation. The assessment uses the `mock` driver to remove any dependency on external services while allowing a production provider to be substituted through configuration. |
-| `FX_RATE_ENDPOINT` | Base URL of the HTTP exchange-rate provider. This is ignored when the mock provider is active but allows the same codebase to switch to a live provider without modification. |
-| `FX_RATE_TIMEOUT_SECONDS` | Maximum amount of time the application waits for an exchange-rate provider before treating the request as failed. This prevents long-running external requests from blocking swap execution. |
-| `FX_RATE_FRESH_SECONDS` | Duration for which a cached exchange rate is considered fresh. Requests within this period are served directly from cache, reducing latency and external API calls. |
-| `FX_RATE_STALE_SECONDS` | Maximum age for serving a stale cached exchange rate while a background refresh is triggered (Stale-While-Revalidate). This improves availability if the provider is temporarily slow or unavailable. |
-| `FX_RATE_REFRESH_LOCK_SECONDS` | Lifetime of the Redis lock used during cache refresh. It prevents multiple concurrent requests from refreshing the same exchange rate simultaneously, avoiding cache stampede problems. |
+| Variable                       | Purpose                                                                                         |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `EXCHANGE_RATE_DRIVER`         | Selects the configured provider. Use `mock` for the assessment or `http` for the HTTP provider. |
+| `FX_RATE_ENDPOINT`             | URL called by the HTTP exchange-rate provider. It is not used when the `mock` driver is active. |
+| `FX_RATE_TIMEOUT_SECONDS`      | Maximum time the HTTP provider may take before the request fails.                               |
+| `FX_RATE_FRESH_SECONDS`        | Period during which a cached rate is considered fresh and returned directly.                    |
+| `FX_RATE_STALE_SECONDS`        | Maximum stale period during which the previous value may be served while refresh occurs.        |
+| `FX_RATE_REFRESH_LOCK_SECONDS` | Redis refresh-lock TTL used to ensure only one process refreshes a stale rate.                  |
+
+The assessment defaults to:
+
+```dotenv
+EXCHANGE_RATE_DRIVER=mock
+```
+
+This avoids dependence on an external FX service while retaining a configurable HTTP provider implementation.
 
 ---
 
@@ -340,22 +710,24 @@ NGN_CLEARING_WALLET_ID=33333333-3333-4333-8333-333333333333
 CNY_CLEARING_WALLET_ID=44444444-4444-4444-8444-444444444444
 ```
 
-| Variable | Description |
-|----------|-------------|
-| `NGN_CLEARING_WALLET_ID` | Platform clearing wallet for NGN. During a swap, funds are debited from the user's NGN wallet and credited to this wallet before the corresponding CNY movement occurs. |
-| `CNY_CLEARING_WALLET_ID` | Platform clearing wallet for CNY. This wallet acts as the balancing account when crediting the destination user's CNY wallet. Using clearing wallets ensures every currency movement remains balanced according to double-entry accounting principles. |
+| Variable                 | Purpose                                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------------------- |
+| `NGN_CLEARING_WALLET_ID` | Identifies the platform NGN clearing account used as the counterparty for NGN ledger movements. |
+| `CNY_CLEARING_WALLET_ID` | Identifies the platform CNY clearing account used as the counterparty for CNY ledger movements. |
+
+The seeders create wallets using these identifiers.
 
 ---
 
-## Distributed Locking
+## Swap Locks
 
 ```dotenv
 SWAP_LOCK_SECONDS=10
 ```
 
-| Variable | Description |
-|----------|-------------|
-| `SWAP_LOCK_SECONDS` | Maximum duration a Redis lock may be held while processing a swap. The lock prevents concurrent requests from spending the same funds more than once. A timeout ensures locks are automatically released if a process crashes unexpectedly. |
+| Variable            | Purpose                                                                                                                                                         |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SWAP_LOCK_SECONDS` | Sets the Redis distributed-lock TTL for swaps. It protects against double spending while ensuring abandoned locks expire automatically if a process terminates. |
 
 ---
 
@@ -365,185 +737,35 @@ SWAP_LOCK_SECONDS=10
 SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
 ```
 
-| Variable | Description |
-|----------|-------------|
-| `SETTLEMENT_WEBHOOK_SECRET` | Shared secret used to verify incoming settlement webhooks using HMAC-SHA256. Only requests signed with the correct secret are accepted, protecting the endpoint from unauthorized or tampered webhook requests. |
+| Variable                    | Purpose                                                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `SETTLEMENT_WEBHOOK_SECRET` | Shared secret used to verify the `X-Settlement-Signature` HMAC-SHA256 header against the exact raw webhook request body. |
+
+Use a secure environment-specific value outside local development.
 
 ---
 
-## Configuration Philosophy
-
-The application keeps operational behaviour configurable through environment variables rather than hardcoding values. This approach provides several benefits:
-
-- **Security** – Secrets and signing keys are managed outside the source code and can be rotated without code changes.
-- **Performance** – Cache freshness windows, timeouts, and lock durations can be tuned for different workloads.
-- **Scalability** – Different exchange-rate providers can be enabled by changing configuration instead of modifying application logic.
-- **Operational Flexibility** – Queue behaviour, locking strategy, and settlement security can be adjusted independently for development, staging, and production environments.
-
----
-
-## Clearing Wallets
+## Required Example Configuration
 
 ```dotenv
+APP_TIMEZONE=Africa/Lagos
+
+CACHE_STORE=redis
+QUEUE_CONNECTION=redis
+
+ELEVATED_ACTION_TOKEN_SECRET=replace-with-a-generated-secret
+ELEVATED_ACTION_TOKEN_TTL_SECONDS=60
+
+EXCHANGE_RATE_DRIVER=mock
+FX_RATE_ENDPOINT=http://127.0.0.1:8001/rates
+FX_RATE_TIMEOUT_SECONDS=3
+FX_RATE_FRESH_SECONDS=30
+FX_RATE_STALE_SECONDS=300
+FX_RATE_REFRESH_LOCK_SECONDS=15
+
 NGN_CLEARING_WALLET_ID=33333333-3333-4333-8333-333333333333
 CNY_CLEARING_WALLET_ID=44444444-4444-4444-8444-444444444444
-```
 
-These wallets act as the platform clearing accounts used during double-entry ledger postings.
-
----
-
-## Distributed Locking
-
-```dotenv
 SWAP_LOCK_SECONDS=10
-```
 
-Maximum duration a swap execution lock is held in Redis.
-
----
-
-## Settlement Webhook
-
-```dotenv
 SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
-```
-
-Shared secret used to verify incoming settlement webhook signatures using HMAC-SHA256.
-
----
-
-# Test User
-
-Email:
-
-davsong@gmail.com
-
-Password:
-
-password
-
-TOTP Secret:
-
-JBSWY3DPEHPK3PXP
-
----
-
-# API Testing
-
-A Postman collection is included.
-
-Recommended order:
-
-1. Login
-2. Generate EAT
-3. Execute Swap
-4. Ledger
-5. Wallet Balance
-6. Settlement
-
----
-
-# Concurrency Test
-
-The project includes a concurrency test that demonstrates protection against
-double spending using Redis distributed locks.
-
-## Prerequisites
-
-Ensure the following services are running:
-
-- MySQL
-- Redis
-
-Reset the database:
-
-```bash
-php artisan migrate:fresh --seed
-```
-
-Seed the dedicated concurrency test data:
-
-```bash
-php artisan db:seed --class=ConcurrencyTestSeeder
-```
-
-## Start the Application
-
-The built-in PHP development server must be started with multiple workers so
-that concurrent requests can be processed simultaneously.
-
-```bash
-PHP_CLI_SERVER_WORKERS=10 php artisan serve
-```
-
-> **Note**
->
-> The concurrency test will not behave correctly when the application is served
-> with a single worker because requests are processed sequentially.
-
-## Execute the Test
-
-Open a second terminal and run:
-
-```bash
-php artisan test tests/Concurrency/SwapConcurrencyTest.php
-```
-
-## Expected Result
-
-The test dispatches ten simultaneous swap requests against the same wallet.
-
-Exactly one request should succeed while the remaining requests are rejected
-because they cannot acquire the distributed lock.
-
-Expected outcome:
-
-- ✅ 1 successful swap
-- ✅ 9 rejected swaps
-- ✅ No negative wallet balance
-- ✅ No duplicate ledger postings
-- ✅ Ledger remains balanced
-
-## Manual Verification (Optional)
-
-After the test completes, verify:
-
-- The source wallet balance has only been reduced once.
-- The destination wallet has only been credited once.
-- Only one ledger transaction exists for the executed swap.
-- The ledger remains balanced (total debits equal total credits).
-
-## Concurrency Test Note
-
-The concurrency test is designed for the PHP built-in server started with
-multiple workers (`PHP_CLI_SERVER_WORKERS=10`).
-
-Running the test against a single-worker server will serialize requests and
-cannot accurately demonstrate distributed locking behavior.
-
----
-
-
-# Quality
-
-```bash
-composer quality
-```
-
-Runs:
-
-- Pest
-- PHPStan
-- Pint
-
----
-
-# Assumptions & Trade-offs
-
-- Mock exchange-rate provider for assessment.
-- Redis used for locks and EAT storage.
-- SQL unique constraint provides webhook idempotency.
-- Ledger is the source of truth for balances.
-
----

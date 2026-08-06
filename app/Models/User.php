@@ -12,12 +12,12 @@ use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Carbon;
 use Laravel\Sanctum\HasApiTokens;
 
+/**
+ * @property Carbon|string|null $totp_enabled_at
+ */
 class User extends Authenticatable
 {
     use HasApiTokens;
-
-    /** @var Carbon|string|null */
-    public $totp_enabled_at;
 
     /** @use HasFactory<UserFactory> */
     use HasFactory;

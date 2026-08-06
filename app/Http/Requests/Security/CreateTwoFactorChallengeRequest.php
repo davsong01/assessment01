@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Security;
 
+use App\Data\Security\ElevatedActionPayload;
 use App\Enums\ElevatedAction;
-use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\ApiRequest;
+use Illuminate\Contracts\Validation\Validator;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Validation\Rule;
 
-final class CreateTwoFactorChallengeRequest extends FormRequest
+final class CreateTwoFactorChallengeRequest extends ApiRequest
 {
     public function authorize(): bool
     {
@@ -29,7 +32,7 @@ final class CreateTwoFactorChallengeRequest extends FormRequest
 
             'action_payload' => [
                 'required',
-                'array',
+                'array:action,source_wallet_id,destination_wallet_id,source_amount_subunits',
             ],
 
             'action_payload.action' => [
@@ -68,5 +71,38 @@ final class CreateTwoFactorChallengeRequest extends FormRequest
             'action_payload.source_wallet_id.different' => 'The source and destination wallets must be different.',
             'action_payload.destination_wallet_id.different' => 'The source and destination wallets must be different.',
         ];
+    }
+
+    protected function failedValidation(Validator $validator): void
+    {
+        throw new HttpResponseException(
+            response()->json([
+                'status' => false,
+                'message' => 'The given data was invalid.',
+                'error' => [
+                    'type' => 'VALIDATION_ERROR',
+                    'details' => $validator->errors(),
+                ],
+            ], 422)
+        );
+    }
+
+    public function actionPayload(): ElevatedActionPayload
+    {
+        /** @var array{
+         *     action: string,
+         *     source_wallet_id: string,
+         *     destination_wallet_id: string,
+         *     source_amount_subunits: int
+         * } $payload
+         */
+        $payload = $this->validated('action_payload');
+
+        return ElevatedActionPayload::fromArray($payload);
+    }
+
+    public function totpCode(): string
+    {
+        return $this->string('totp_code')->toString();
     }
 }

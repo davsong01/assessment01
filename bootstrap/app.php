@@ -3,7 +3,9 @@
 use App\Enums\ErrorCode;
 use App\Exceptions\InvalidActionPayloadException;
 use App\Exceptions\InvalidCredentialsException;
+use App\Exceptions\InvalidElevatedActionTokenException;
 use App\Exceptions\InvalidTotpCodeException;
+use App\Exceptions\InvalidWalletSelectionException;
 use App\Exceptions\TotpNotConfiguredException;
 use App\Support\ApiResponse;
 use Illuminate\Auth\AuthenticationException;
@@ -12,6 +14,7 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Str;
@@ -32,6 +35,41 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request, Throwable $exception): bool => $request->is('api/*')
                 || $request->expectsJson()
+        );
+        $exceptions->render(
+            function (
+                InvalidWalletSelectionException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::failure(
+                    message: $exception->getMessage(),
+                    code: ErrorCode::Validation,
+                    details: [
+                        'action_payload' => [
+                            $exception->getMessage(),
+                        ],
+                    ],
+                    status: 422
+                );
+            }
+        );
+        $exceptions->render(
+            function (
+                InvalidElevatedActionTokenException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::unauthorized(
+                    $exception->getMessage()
+                );
+            }
         );
         $exceptions->render(
             function (
@@ -83,6 +121,7 @@ return Application::configure(basePath: dirname(__DIR__))
                 );
             }
         );
+
         $exceptions->render(
             function (
                 ValidationException $exception,
@@ -167,6 +206,19 @@ return Application::configure(basePath: dirname(__DIR__))
                 }
 
                 return ApiResponse::tooManyRequests();
+            }
+        );
+
+        $exceptions->render(
+            function (
+                HttpResponseException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return $exception->getResponse();
             }
         );
 

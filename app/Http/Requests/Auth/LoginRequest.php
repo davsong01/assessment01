@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace App\Http\Requests\Auth;
 
-use Illuminate\Foundation\Http\FormRequest;
+use App\Http\Requests\ApiRequest;
 
-final class LoginRequest extends FormRequest
+final class LoginRequest extends ApiRequest
 {
     public function authorize(): bool
     {

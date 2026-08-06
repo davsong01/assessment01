@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace Database\Seeders;
 
+use App\Enums\Currency;
+use App\Enums\WalletStatus;
+use App\Enums\WalletType;
 use App\Models\User;
+use App\Models\Wallet;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 
@@ -12,9 +16,15 @@ class UserSeeder extends Seeder
 {
     public const TOTP_SECRET = 'JBSWY3DPEHPK3PXP';
 
+    public const NGN_WALLET_ID =
+        '11111111-1111-4111-8111-111111111111';
+
+    public const CNY_WALLET_ID =
+        '22222222-2222-4222-8222-222222222222';
+
     public function run(): void
     {
-        User::query()->updateOrCreate(
+        $user = User::query()->updateOrCreate(
             [
                 'email' => 'davsong@gmail.com',
             ],
@@ -24,6 +34,30 @@ class UserSeeder extends Seeder
                 'email_verified_at' => now(),
                 'totp_secret' => self::TOTP_SECRET,
                 'totp_enabled_at' => now(),
+            ]
+        );
+
+        Wallet::query()->updateOrCreate(
+            [
+                'id' => self::NGN_WALLET_ID,
+            ],
+            [
+                'user_id' => $user->id,
+                'currency' => Currency::NGN,
+                'type' => WalletType::User,
+                'status' => WalletStatus::Active,
+            ]
+        );
+
+        Wallet::query()->updateOrCreate(
+            [
+                'id' => self::CNY_WALLET_ID,
+            ],
+            [
+                'user_id' => $user->id,
+                'currency' => Currency::CNY,
+                'type' => WalletType::User,
+                'status' => WalletStatus::Active,
             ]
         );
     }

@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Contracts\Security\ElevatedActionTokenStore;
+use App\Services\Security\RedisElevatedActionTokenStore;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -16,10 +18,14 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        // Register Google2FA
         $this->app->singleton(
             Google2FA::class,
             static fn (): Google2FA => new Google2FA
+        );
+
+        $this->app->singleton(
+            ElevatedActionTokenStore::class,
+            RedisElevatedActionTokenStore::class
         );
     }
 
@@ -28,7 +34,6 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
-        // configure rate limiting for login attempts
         RateLimiter::for(
             'login',
             function (Request $request): Limit {
@@ -38,6 +43,24 @@ class AppServiceProvider extends ServiceProvider
 
                 return Limit::perMinute(5)
                     ->by($email.'|'.$request->ip());
+            }
+        );
+
+        RateLimiter::for(
+            'two-factor-challenge',
+            function (Request $request): Limit {
+                $userId = $request->user()?->getAuthIdentifier();
+
+                return Limit::perMinute(5)
+                    ->by(
+                        sprintf(
+                            '%s|%s',
+                            is_int($userId) || is_string($userId)
+                                ? (string) $userId
+                                : 'guest',
+                            $request->ip()
+                        )
+                    );
             }
         );
     }

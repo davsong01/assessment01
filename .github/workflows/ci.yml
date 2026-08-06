@@ -6,41 +6,147 @@ on:
 
 jobs:
   quality:
+    name: Quality and Concurrency
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     services:
       mysql:
-        image: mysql:8
+        image: mysql:8.0
         env:
           MYSQL_DATABASE: tupay
           MYSQL_ROOT_PASSWORD: root
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping"
-          --health-interval=10s
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
           --health-timeout=5s
-          --health-retries=5
+          --health-retries=20
 
       redis:
         image: redis:7
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      APP_ENV: testing
+      APP_DEBUG: "false"
+      APP_URL: http://127.0.0.1:8000
+      APP_TIMEZONE: Africa/Lagos
+
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: 3306
+      DB_DATABASE: tupay
+      DB_USERNAME: root
+      DB_PASSWORD: root
+
+      REDIS_CLIENT: phpredis
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: 6379
+      REDIS_DB: 0
+      REDIS_CACHE_DB: 1
+
+      CACHE_STORE: redis
+      QUEUE_CONNECTION: sync
+      SESSION_DRIVER: array
+      MAIL_MAILER: array
+
+      EXCHANGE_RATE_DRIVER: mock
+      FX_RATE_ENDPOINT: http://127.0.0.1:8001/rates
+      FX_RATE_TIMEOUT_SECONDS: 3
+      FX_RATE_FRESH_SECONDS: 30
+      FX_RATE_STALE_SECONDS: 300
+      FX_RATE_REFRESH_LOCK_SECONDS: 15
+
+      ELEVATED_ACTION_TOKEN_SECRET: ci-elevated-action-token-secret-please-change
+      ELEVATED_ACTION_TOKEN_TTL_SECONDS: 60
+
+      NGN_CLEARING_WALLET_ID: 33333333-3333-4333-8333-333333333333
+      CNY_CLEARING_WALLET_ID: 44444444-4444-4444-8444-444444444444
+      SWAP_LOCK_SECONDS: 10
+
+      SETTLEMENT_WEBHOOK_SECRET: ci-settlement-secret
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - uses: shivammathur/setup-php@v2
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
         with:
-          php-version: 8.4
-          extensions: bcmath, redis, pdo_mysql
+          php-version: "8.3"
+          extensions: bcmath, mbstring, redis, pdo_mysql
+          coverage: none
+          tools: composer:v2
 
-      - run: composer install --no-interaction
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
 
-      - run: cp .env.example .env
+      - name: Create environment file
+        run: cp .env.example .env
 
-      - run: php artisan key:generate
+      - name: Generate application key
+        run: php artisan key:generate
 
-      - run: php artisan migrate --force
+      - name: Clear cached configuration
+        run: php artisan optimize:clear
 
-      - run: composer quality
+      - name: Run database migrations
+        run: php artisan migrate:fresh --seed --force
+
+      - name: Check code style
+        run: vendor/bin/pint --test
+
+      - name: Run PHPStan Level 8
+        run: vendor/bin/phpstan analyse --no-progress
+
+      - name: Run standard tests
+        run: php artisan test --exclude-group=concurrency
+
+      - name: Prepare concurrency test database
+        run: |
+          php artisan migrate:fresh --seed --force
+          php artisan db:seed --class=ConcurrencyTestSeeder --force
+
+      - name: Start multi-worker Laravel server
+        run: |
+          PHP_CLI_SERVER_WORKERS=10 \
+          php artisan serve \
+            --host=127.0.0.1 \
+            --port=8000 \
+            > storage/logs/ci-server.log 2>&1 &
+
+          echo $! > /tmp/tupay-server.pid
+
+      - name: Wait for Laravel server
+        run: |
+          for attempt in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8000/up > /dev/null; then
+              echo "Laravel server is ready."
+              exit 0
+            fi
+
+            sleep 1
+          done
+
+          echo "Laravel server did not start."
+          cat storage/logs/ci-server.log
+          exit 1
+
+      - name: Run parallel concurrency test
+        run: |
+          php artisan test \
+            tests/Concurrency/SwapConcurrencyTest.php
+
+      - name: Show server log on failure
+        if: failure()
+        run: |
+          echo "Laravel server log:"
+          cat storage/logs/ci-server.log || true

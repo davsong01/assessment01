@@ -8,7 +8,7 @@ use Closure;
 use Illuminate\Contracts\Cache\Repository;
 use Psr\SimpleCache\InvalidArgumentException;
 
-final readonly class CacheService
+readonly class CacheService
 {
     public function __construct(
         private Repository $cache

@@ -17,7 +17,12 @@ final class HttpExchangeRateProvider implements ExchangeRateProvider
         Currency $from,
         Currency $to
     ): ExchangeRateData {
-        $endpoint = config('exchange-rate.endpoint');
+        $endpoint = config('services.exchange_rate.endpoint');
+
+        $timeout = config(
+            'services.exchange_rate.timeout_seconds',
+            3
+        );
 
         if (! is_string($endpoint) || $endpoint === '') {
             throw new ExchangeRateUnavailableException(

@@ -9,7 +9,7 @@ use Illuminate\Contracts\Cache\Lock;
 use Illuminate\Contracts\Cache\LockProvider;
 use RuntimeException;
 
-final readonly class RedisLockService
+readonly class RedisLockService
 {
     public function __construct(
         private CacheManager $cacheManager

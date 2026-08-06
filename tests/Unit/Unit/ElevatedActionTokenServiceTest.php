@@ -157,7 +157,10 @@ it('rejects a token with an invalid signature', function (): void {
         actionPayload: $payload
     );
 
-    $tampered = substr($token, 0, -1).'0';
+    $lastCharacter = substr($token, -1);
+
+    $tampered = substr($token, 0, -1)
+        .($lastCharacter === '0' ? '1' : '0');
 
     $service->consume(
         token: $tampered,
@@ -165,7 +168,6 @@ it('rejects a token with an invalid signature', function (): void {
         actualPayload: $payload
     );
 })->throws(InvalidElevatedActionTokenException::class);
-
 it('rejects an expired token', function (): void {
     Carbon::setTestNow('2026-08-06 10:00:00');
 

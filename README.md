@@ -324,23 +324,84 @@ Recommended order:
 
 # Concurrency Test
 
+The project includes a concurrency test that demonstrates protection against
+double spending using Redis distributed locks.
+
+## Prerequisites
+
+Ensure the following services are running:
+
+- MySQL
+- Redis
+
+Reset the database:
+
 ```bash
 php artisan migrate:fresh --seed
+```
+
+Seed the dedicated concurrency test data:
+
+```bash
 php artisan db:seed --class=ConcurrencyTestSeeder
+```
 
+## Start the Application
+
+The built-in PHP development server must be started with multiple workers so
+that concurrent requests can be processed simultaneously.
+
+```bash
 PHP_CLI_SERVER_WORKERS=10 php artisan serve
+```
 
+> **Note**
+>
+> The concurrency test will not behave correctly when the application is served
+> with a single worker because requests are processed sequentially.
+
+## Execute the Test
+
+Open a second terminal and run:
+
+```bash
 php artisan test tests/Concurrency/SwapConcurrencyTest.php
 ```
 
-Expected:
+## Expected Result
 
-- 1 success
-- 9 failures
-- No overdraft
-- Balanced ledger
+The test dispatches ten simultaneous swap requests against the same wallet.
+
+Exactly one request should succeed while the remaining requests are rejected
+because they cannot acquire the distributed lock.
+
+Expected outcome:
+
+- ✅ 1 successful swap
+- ✅ 9 rejected swaps
+- ✅ No negative wallet balance
+- ✅ No duplicate ledger postings
+- ✅ Ledger remains balanced
+
+## Manual Verification (Optional)
+
+After the test completes, verify:
+
+- The source wallet balance has only been reduced once.
+- The destination wallet has only been credited once.
+- Only one ledger transaction exists for the executed swap.
+- The ledger remains balanced (total debits equal total credits).
+
+## Concurrency Test Note
+
+The concurrency test is designed for the PHP built-in server started with
+multiple workers (`PHP_CLI_SERVER_WORKERS=10`).
+
+Running the test against a single-worker server will serialize requests and
+cannot accurately demonstrate distributed locking behavior.
 
 ---
+
 
 # Quality
 

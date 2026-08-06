@@ -8,10 +8,12 @@ use App\Exceptions\InvalidActionPayloadException;
 use App\Exceptions\InvalidCredentialsException;
 use App\Exceptions\InvalidElevatedActionTokenException;
 use App\Exceptions\InvalidLedgerEntryException;
+use App\Exceptions\InvalidSwapWalletException;
 use App\Exceptions\InvalidTotpCodeException;
 use App\Exceptions\InvalidWalletSelectionException;
 use App\Exceptions\LedgerGuardrailException;
 use App\Exceptions\LedgerImbalanceException;
+use App\Exceptions\SwapConflictException;
 use App\Exceptions\TotpNotConfiguredException;
 use App\Support\ApiResponse;
 use Illuminate\Auth\AuthenticationException;
@@ -41,6 +43,40 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request, Throwable $exception): bool => $request->is('api/*')
                 || $request->expectsJson()
+        );
+
+        $exceptions->render(
+            function (
+                SwapConflictException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::failure(
+                    message: $exception->getMessage(),
+                    code: ErrorCode::SwapConflict,
+                    status: 409
+                );
+            }
+        );
+
+        $exceptions->render(
+            function (
+                InvalidSwapWalletException $exception,
+                Request $request
+            ) {
+                if (! $request->is('api/*')) {
+                    return null;
+                }
+
+                return ApiResponse::failure(
+                    message: $exception->getMessage(),
+                    code: ErrorCode::InvalidSwapWallet,
+                    status: 422
+                );
+            }
         );
         $exceptions->render(
             function (

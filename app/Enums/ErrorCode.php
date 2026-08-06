@@ -37,4 +37,8 @@ enum ErrorCode: string
     case LedgerGuardrail = 'LEDGER_GUARDRAIL_REJECTION';
 
     case ExchangeRateUnavailable = 'EXCHANGE_RATE_UNAVAILABLE';
+
+    case SwapConflict = 'SWAP_CONFLICT';
+
+    case InvalidSwapWallet = 'INVALID_SWAP_WALLET';
 }

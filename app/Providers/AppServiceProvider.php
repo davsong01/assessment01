@@ -99,5 +99,19 @@ class AppServiceProvider extends ServiceProvider
                     );
             }
         );
+
+        RateLimiter::for(
+            'swap',
+            function (Request $request): Limit {
+                $userId = $request->user()?->getAuthIdentifier();
+
+                return Limit::perMinute(20)
+                    ->by(
+                        is_int($userId) || is_string($userId)
+                            ? (string) $userId
+                            : $request->ip()
+                    );
+            }
+        );
     }
 }

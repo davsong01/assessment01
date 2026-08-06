@@ -1,97 +1,264 @@
+
 # TuPay Backend Assessment
 
 ## Overview
 
-This project is my submission for the TuPay Backend Engineering Assessment.
+This repository is my submission for the TuPay Backend Engineering Assessment.
 
-The solution implements a secure wallet-to-wallet currency swap service using Laravel 12, Redis, MySQL and a double-entry ledger architecture. The implementation focuses on correctness, transactional integrity, concurrency safety and production-oriented design while keeping the codebase simple and maintainable.
-
----
-
-# Tech Stack
-
-* PHP 8.4
-* Laravel 12
-* MySQL
-* Redis
-* Laravel Queues
-* Laravel Sanctum
-* Google2FA
-* Pest
-* PHPStan (Level 8)
-* Laravel Pint
+The solution implements a secure wallet-to-wallet currency swap platform using **Laravel 11**, **PHP 8.2+**, **MySQL**, and **Redis**. The implementation focuses on transactional integrity, double-entry accounting, step-up authentication, concurrency safety, idempotent settlement processing, and clean domain-oriented architecture.
 
 ---
 
-# Features Implemented
+# Technology Stack
 
-## Authentication
-
-* Email/password authentication
-* Laravel Sanctum API tokens
-
-## Step-Up Authentication
-
-* TOTP verification using Google Authenticator
-* Elevated Action Token (EAT)
-* One-time use EAT
-* Payload binding
-* Expiration support
-* Replay attack protection
-
-## Wallet Swap
-
-* Currency validation
-* Balance validation
-* Exchange rate service
-* Atomic ledger posting
-* Double-entry accounting
-* Transaction rollback on failure
-
-## Ledger
-
-* Double-entry ledger
-* Immutable posted transactions
-* Ledger history endpoint
-* Wallet balance endpoint
-* Per-currency balancing
-
-## Settlement Webhook
-
-* HMAC-SHA256 signature verification
-* SQL-based idempotency
-* Out-of-order webhook handling
-* Asynchronous processing using Laravel Queues
-
-## Concurrency Protection
-
-* Redis distributed locking
-* Prevents double spending
-* Atomic swap execution
+- PHP 8.2+
+- Laravel 11
+- MySQL
+- Redis
+- Laravel Sanctum
+- Google2FA
+- Laravel Queues
+- Pest
+- PHPStan (Level 8)
+- Laravel Pint
 
 ---
 
-# Project Structure
+# Features
 
+- Sanctum Authentication
+- Step-Up Authentication (TOTP + Elevated Action Token)
+- Wallet-to-Wallet Currency Swap
+- Double-Entry Ledger
+- Exchange Rate Provider Abstraction
+- Redis Distributed Locking
+- Idempotent Settlement Webhook
+- Queue-based Settlement Processing
+- Ledger History API
+- Wallet Balance API
+- Concurrency Protection
+
+---
+
+# Solution Architecture
+
+```text
+                 Client
+                    │
+                    ▼
+             API Controllers
+                    │
+                    ▼
+                 Actions
+                    │
+                    ▼
+             Domain Services
+     ┌──────────┬──────────┬──────────┐
+     │          │          │          │
+  Ledger     Swap     Settlement  ExchangeRate
+     │          │          │
+     └──────────┴──────────┘
+             Redis / MySQL
 ```
+
+Controllers only coordinate requests. Business logic lives inside Actions and Services.
+
+---
+
+# Architectural Decisions
+
+## Service Classes
+
+- LedgerService – Double-entry posting
+- ExchangeRateService – Exchange rate retrieval
+- SettlementService – Settlement state transitions
+- CacheService – Generic cache abstraction
+- RedisLockService – Distributed locking
+- ElevatedActionTokenService – EAT lifecycle
+
+## Actions
+
+Actions encapsulate business use-cases.
+
+Example:
+
+- ExecuteSwap
+
+This keeps controllers thin while making business logic independently testable.
+
+## Domain Structure
+
+```text
 app/
- ├── Actions
- ├── Data
- ├── Enums
- ├── Exceptions
- ├── Http
- ├── Jobs
- ├── Models
- ├── Responses
- ├── Services
- │     ├── Cache
- │     ├── ExchangeRate
- │     ├── Ledger
- │     ├── Locks
- │     ├── Settlement
- │     └── Swap
- └── Support
+    Actions/
+    Data/
+    Enums/
+    Http/
+    Models/
+    Services/
+        Ledger/
+        Settlement/
+        ExchangeRate/
+        Locks/
+        Cache/
+        Swap/
 ```
+
+---
+
+# Step-Up Authentication
+
+Financial operations require:
+
+1. Sanctum authentication
+2. Elevated Action Token (EAT)
+
+Flow:
+
+```text
+Login
+ ↓
+Sanctum Token
+ ↓
+Verify TOTP
+ ↓
+Issue Elevated Action Token
+ ↓
+Execute Swap
+```
+
+## Token Hashing
+
+The Elevated Action Token is never stored in plaintext.
+
+The implementation:
+
+1. Generates a random token identifier.
+2. Hashes the identifier using SHA-256.
+3. Stores only the hash in Redis together with the action metadata.
+4. Returns the signed token to the client.
+
+During verification the incoming identifier is hashed again before comparison.
+
+## Token Invalidation
+
+Immediately after successful verification:
+
+- Redis entry is deleted.
+- Replay attacks are prevented.
+- Tokens remain one-time use.
+- Redis TTL expires unused tokens automatically.
+
+---
+
+# Swap Execution
+
+```text
+Acquire Redis Lock
+ ↓
+Validate Wallets
+ ↓
+Validate Balance
+ ↓
+Fetch Exchange Rate
+ ↓
+Calculate Quote
+ ↓
+Begin Transaction
+ ↓
+Create Ledger Posting
+ ↓
+Commit
+ ↓
+Release Lock
+```
+
+---
+
+# Double-Entry Ledger
+
+Every movement creates balanced debit and credit entries.
+
+Balances are derived from immutable ledger entries rather than mutable balance columns.
+
+---
+
+# Deadlock Prevention
+
+Redis distributed locks protect swap execution.
+
+Locks are acquired before the database transaction begins.
+
+Wallet identifiers are ordered deterministically before generating the lock key, ensuring identical lock acquisition order regardless of request direction and preventing circular wait conditions.
+
+---
+
+# Settlement Processing
+
+Webhook flow:
+
+```text
+Provider
+ ↓
+Verify HMAC Signature
+ ↓
+Dispatch Queue
+ ↓
+SettlementService
+ ↓
+Persist State
+```
+
+Features:
+
+- HMAC-SHA256 verification
+- SQL-backed idempotency
+- Queue processing
+- Out-of-order event handling
+- Monotonic state transitions
+
+---
+
+# Database Indexing
+
+## Ledger Entries
+
+Composite index:
+
+```sql
+(wallet_id, created_at)
+```
+
+Optimises:
+
+```sql
+SELECT ...
+FROM ledger_entries
+WHERE wallet_id = ?
+ORDER BY created_at DESC
+LIMIT ...
+```
+
+This supports efficient pagination for `GET /api/ledger/{wallet_id}`.
+
+## Ledger Transactions
+
+Indexes:
+
+- (status, created_at)
+- (type, status)
+
+These support reporting and transaction history queries.
+
+## Settlements
+
+Unique index:
+
+```
+provider_reference
+```
+
+Provides SQL-level idempotency.
 
 ---
 
@@ -99,46 +266,26 @@ app/
 
 ```bash
 composer install
-
 cp .env.example .env
-
 php artisan key:generate
-```
-
-Configure:
-
-* MySQL
-* Redis
-
-Then run:
-
-```bash
 php artisan migrate --seed
 ```
 
-Start the application:
+Run:
 
 ```bash
 php artisan serve
-```
-
-Start the queue worker:
-
-```bash
 php artisan queue:work
 ```
 
 ---
 
-# Environment Variables
+# Environment
 
-```
+```dotenv
 CACHE_STORE=redis
-
 QUEUE_CONNECTION=redis
-
 EXCHANGE_RATE_DRIVER=mock
-
 SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
 ```
 
@@ -146,139 +293,74 @@ SETTLEMENT_WEBHOOK_SECRET=local-settlement-secret
 
 # Test User
 
-```
 Email:
+
 davsong@gmail.com
 
 Password:
+
 password
-```
 
-The TOTP secret seeded into the database is:
+TOTP Secret:
 
-```
 JBSWY3DPEHPK3PXP
-```
-
-Import this secret into Google Authenticator to generate valid TOTP codes.
 
 ---
 
-# API Walkthrough
+# API Testing
 
-The repository includes a Postman collection demonstrating the complete flow.
+A Postman collection is included.
 
-Sequence:
+Recommended order:
 
 1. Login
-2. Generate Elevated Action Token
+2. Generate EAT
 3. Execute Swap
-4. View Ledger History
-5. View Wallet Balance
-6. Submit Settlement Webhook
+4. Ledger
+5. Wallet Balance
+6. Settlement
 
 ---
 
 # Concurrency Test
 
-The project includes a concurrency test demonstrating protection against double spending using Redis distributed locking.
-
-Before running the test:
-
 ```bash
 php artisan migrate:fresh --seed
-
 php artisan db:seed --class=ConcurrencyTestSeeder
-```
 
-Start the application with multiple PHP workers:
-
-```bash
 PHP_CLI_SERVER_WORKERS=10 php artisan serve
-```
 
-Run the concurrency test:
-
-```bash
 php artisan test tests/Concurrency/SwapConcurrencyTest.php
 ```
 
-Expected result:
+Expected:
 
-* Exactly one request succeeds
-* Nine requests fail
-* Wallet balance never becomes negative
-* Ledger remains balanced
+- 1 success
+- 9 failures
+- No overdraft
+- Balanced ledger
 
 ---
 
-# Running Tests
-
-Run the complete test suite:
-
-```bash
-php artisan test
-```
-
-Run static analysis:
-
-```bash
-vendor/bin/phpstan analyse
-```
-
-Run code style checks:
-
-```bash
-vendor/bin/pint
-```
-
-Or run everything together:
+# Quality
 
 ```bash
 composer quality
 ```
 
----
+Runs:
 
-# Design Decisions
-
-### Double-entry Ledger
-
-Every financial transaction creates equal debit and credit entries, ensuring that each currency always balances to zero.
-
-### Redis Distributed Locking
-
-Swap execution uses Redis locks to prevent concurrent requests from spending the same balance.
-
-### Elevated Action Token
-
-Sensitive financial actions require a short-lived signed token issued after successful TOTP verification.
-
-### Settlement Processing
-
-Settlement webhooks are authenticated using HMAC-SHA256 signatures and processed asynchronously through Laravel Queues.
-
-Duplicate webhook deliveries are handled safely using a unique `provider_reference`, while out-of-order events are ignored through state transition checks.
-
-### Exchange Rate Provider
-
-The exchange rate service is provider-driven and configurable via environment variables. A mock provider is supplied for the assessment.
+- Pest
+- PHPStan
+- Pint
 
 ---
 
-# Future Improvements
+# Assumptions & Trade-offs
 
-Potential production enhancements include:
-
-* Real exchange-rate provider integration
-* Multi-provider settlement support
-* Dead-letter queue handling
-* Settlement retry policies
-* Redis-backed idempotency keys
-* Event sourcing
-* Metrics and observability
-* OpenAPI / Swagger documentation
+- Mock exchange-rate provider for assessment.
+- Redis used for locks and EAT storage.
+- SQL unique constraint provides webhook idempotency.
+- Ledger is the source of truth for balances.
 
 ---
-
-Thank you for reviewing my submission.
